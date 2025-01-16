@@ -28,8 +28,8 @@ class waveform:
     Tip: wf.__dict__  should give you the list of attributes/parameters (here wf is the waveform object).
     """
     def __init__(self,  
-                m1= 50,    # kgs
-                m2= 50,    # kgs
+                m1= 50,           # MSUN
+                m2= 50,           # MSUN
                 a1x=0.0, 
                 a1y=0.0, 
                 a1z=0.0, 
@@ -38,21 +38,21 @@ class waveform:
                 a2z=0.0, 
                 eccentricity=0.0,
                 meanPerAno=0.0,   # radian
-                distance=400, # m 
+                distance=400,     # Mpc 
                 phiref=0.0,       # radian
                 inclination=0.0,  # radian
                 psi=0.0,          # radian
 
                 approximant="SEOBNRv4",  
-                fmin=20.,       # Hz
-                fmax=1024,      # Hz
-                deltaT=1./4096, # s
-                deltaF= 1./8,   # Hz
+                fmin=20.,          # Hz
+                fmax=1024,         # Hz
+                deltaT=1./4096,    # s
+                deltaF= 1./8,      # Hz
                 fref=20., 
                 extra_lal_params=lal.CreateDict(), 
                 declination=0.0, 
                 rightascenion=0.0,
-                NR_hdf5_path = None):
+                NR_hdf5_path=None):
     
         ##intrinsic variables
         self.m1=m1*MSUN
@@ -70,7 +70,6 @@ class waveform:
         self.distance=distance*MPC
         self.phiref=phiref
         self.inclination=inclination
-        self.meanPerAno=meanPerAno
         self.psi=psi
         self.declination=declination   
         self.rightascenion=rightascenion
