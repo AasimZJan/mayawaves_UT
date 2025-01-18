@@ -16,7 +16,8 @@ import lalsimulation as lalsim
 import h5py
 import sys
 import romspline
-
+from scipy import interpolate
+import inspect
 
 MSUN = lal.MSUN_SI # solar mass in kgs
 MPC = 10**6 * lal.PC_SI # mega parsecs in meters
@@ -227,3 +228,116 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
     waveform_object.phiref, waveform_object.psi, waveform_object.eccentricity, waveform_object.meanPerAno, waveform_object.deltaT, waveform_object.fmin, waveform_object.fref,
     waveform_object.extra_lal_params, getattr(waveform_object.approximant))
     return hp, hc
+
+
+def resample_psd(psd, fvals):   #this acts weird due to non integer steps size, need to test it
+    """Takes in a PSD which should have two columns, frequnecy and data, and returns it with a new  deltaF"""
+    frequency, data = np.loadtxt(psd, delimiter=" ", comments="#",unpack=True)
+    interp = interpolate.interp1d(frequency, data, fill_value = 'extrapolate')
+    return fvals, interp(fvals)
+    
+def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd = "H1", flow = 20, fhigh = 2048, resize = "power_2", phase_maximization_trick = False, output_overlap_time_series = False, verbose = True, plots = False):
+    # First resize. Why? deltaF = 1/T, so both waveforms need to have same duration.
+    # FFT
+    # Load PSD. Allow user to load their own psd when they call the function.
+    # Norms
+    # IP
+    assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1}, deltaT_2 = {deltaT_2}'
+    # variables for resizing
+    len_1, len_2 = len(waveform_time_series1), len(waveform_time_series2)
+    max_len, min_len = np.max([len_1, len_2]), np.min([len_1, len_2])
+    power2_len = int(2**np.ceil(np.log2(max_len)))
+
+    # resizing
+    if resize == 'max':
+        if verbose:
+            print(f"Resizing to {max_len} from len_1 = {len_1}, len_2 = {len_2}")
+        wf_tseries_1 = np.zeros(max_len, dtype=complex)
+        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1
+
+        wf_tseries_2 = np.zeros(max_len, dtype=complex)
+        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
+    
+    elif resize == 'min':
+        if verbose:
+            print(f"Resizing to {min_len} from len_1 = {len_1}, len_2 = {len_2}")
+        wf_tseries_1 = np.zeros(min_len, dtype=complex)
+        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1
+
+        wf_tseries_2 = np.zeros(min_len, dtype=complex)
+        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
+    
+    elif resize == "power_2":
+        if verbose:
+            print(f"Resizing to {power2_len} from len_1 = {len_1}, len_2 = {len_2}")
+        wf_tseries_1 = np.zeros(power2_len, dtype=complex)
+        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1
+
+        wf_tseries_2 = np.zeros(power2_len, dtype=complex)
+        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
+
+    # FFT
+    wf_1_FD = np.fft.fft(wf_tseries_1)
+    wf_2_FD = np.fft.fft(wf_tseries_2)
+    deltaF  = 1 / (len(waveform_time_series1) * deltaT_1)
+    fvals = np.fft.fftfreq(len(wf_tseries_1), deltaT_1)
+
+    # Load PSDs
+    curr_path=inspect.getfile(inspect.currentframe())
+    index_path=curr_path.find("analysisutils")
+    if psd == "H1":
+        psd=curr_path[:index_path]+"/PSD/LIGO_H1.txt" #deltaF=1./8 Hz
+    if psd == "L1":
+        psd=curr_path[:index_path]+"/PSD/LIGO_L1.txt"
+    if psd == "V1":
+        psd=curr_path[:index_path]+"/PSD/LIGO_V1.txt"
+    if psd == "ET":
+        psd=curr_path[:index_path]+"/PSD/ET.txt"
+    if psd == "CE":
+        psd=curr_path[:index_path]+"/PSD/CE.txt"
+    if psd == "LISA":
+            psd=curr_path[:index_path]+"/PSD/LISA.txt"
+    print(f"Integrating from flow={flow} Hz, fhigh={fhigh} Hz")
+    if psd == "Flat":
+        data = np.ones(len(fvals))
+    else:
+        frequency, data = resample_psd(psd, np.abs(fvals))
+    # the psd data will be defined over all the frequency, now we have to choose
+    index_1 = np.argwhere(np.abs(fvals)>= flow)
+    index_2 = np.argwhere(np.abs(fvals)<= fhigh)
+    combined = np.intersect1d(index_1, index_2)
+
+    weights = np.zeros(len(data))
+    weights[combined] = 1/data[combined]
+
+    if plots:
+        plt.plot(fvals, 1/data)
+        plt.plot(fvals, weights)
+        plt.xlabel("Frequency [Hz]")
+        plt.ylabel("PSD")
+        plt.axvline(x = flow)
+        plt.axvline(x = fhigh)
+        plt.axvline(x = -flow)
+        plt.axvline(x = -fhigh)
+        plt.show()
+    
+    # Norms
+    norm_1 = np.sqrt(2 * 4 * deltaF * np.sum(wf_1_FD.conj() * wf_1_FD * weights) / len(wf_1_FD)**2 )
+    norm_2 = np.sqrt(2 * 4 * deltaF * np.sum(wf_2_FD.conj() * wf_2_FD * weights) / len(wf_1_FD)**2 )
+    if verbose:
+        print(f"norm-1 = {norm_1}, norm-2 = {norm_2}")
+
+    # IP
+    integrand = 2 * wf_1_FD.conj() * wf_2_FD
+    overlap_time_shift = np.fft.ifft(integrand)/len(integrand) * 2
+
+    if phase_maximization_trick:
+        overlap_time_series = np.abs(overlap_time_shift)
+    else:
+        overlap_time_series = np.real(overlap_time_shift)
+    
+    time_max_match = np.max(overlap_time_series)
+    if output_overlap_time_series:
+        return 1 - time_max_match, overlap_time_series
+    else:
+        return 1 - time_max_match
