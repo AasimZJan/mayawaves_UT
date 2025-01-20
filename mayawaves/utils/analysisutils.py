@@ -5,12 +5,11 @@
 #   taper_time_series                     (DONE)
 #   get_detector_frame_modes_from_NR_hdf5 (DONE)
 #   get_model_waveform_polarizations      (DONE)
+#   mismatch                              (DONE)
 #   get_detector_frame_polarizations
-#   get_PSDs
-#   mismatch 
+
 
 import numpy as np
-import matplotlib.pyplot as plt
 import lal
 import lalsimulation as lalsim
 import h5py
@@ -56,8 +55,8 @@ class waveform:
                 NR_hdf5_path=None):
     
         ##intrinsic variables
-        self.m1=m1*MSUN
-        self.m2=m2*MSUN
+        self.m1=m1
+        self.m2=m2
         self.a1x=a1x
         self.a1y=a1y
         self.a1z=a1z
@@ -68,7 +67,7 @@ class waveform:
         self.meanPerAno=meanPerAno
 
         ##extrinsic variables
-        self.distance=distance*MPC
+        self.distance=distance
         self.phiref=phiref
         self.inclination=inclination
         self.psi=psi
@@ -127,12 +126,12 @@ def taper_time_series(time_series, taper_percent=1, taper_type="cosine"):
 def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None, include_m_0_modes=False, waveform_convention=1, verbose=False):
     assert waveform_convention in [1, -1], "Waveform convention can either be 1 or -1."
 
-    #For unit conversion
+    # For unit conversion
     MSUN_sec = G/C**3
     mtot_in_sec = (waveform_object.m1 + waveform_object.m2) * MSUN_sec
     dist_in_sec = waveform_object.dist/C
 
-    #just to know what time array we are dealing with
+    # just to know what time array we are dealing with
     data_1 = h5py.File(waveform_object.NR_hdf5_path)
 
     # mass and fmin (mass set by total mass from the waveform object)
@@ -209,7 +208,7 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
         for j in modes:
             modes_array.append(j)
     else:
-        print("Inconsistent input, use either lmax or only_mode.")
+        print("Inconsistent input, use either lmax or modes.")
         sys.exit()
     
     if verbose:
@@ -236,13 +235,9 @@ def resample_psd(psd, fvals):   #this acts weird due to non integer steps size, 
     interp = interpolate.interp1d(frequency, data, fill_value = 'extrapolate')
     return fvals, interp(fvals)
     
-def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd = "H1", flow = 20, fhigh = 2048, resize = "power_2", phase_maximization_trick = False, output_overlap_time_series = False, verbose = True, plots = False):
-    # First resize. Why? deltaF = 1/T, so both waveforms need to have same duration.
-    # FFT
-    # Load PSD. Allow user to load their own psd when they call the function.
-    # Norms
-    # IP
-    assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1}, deltaT_2 = {deltaT_2}'
+def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True, plots=False):
+    assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1} s, deltaT_2 = {deltaT_2} s.'
+    
     # variables for resizing
     len_1, len_2 = len(waveform_time_series1), len(waveform_time_series2)
     max_len, min_len = np.max([len_1, len_2]), np.min([len_1, len_2])
@@ -282,11 +277,11 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
     deltaF  = 1 / (len(waveform_time_series1) * deltaT_1)
     fvals = np.fft.fftfreq(len(wf_tseries_1), deltaT_1)
 
-    # Load PSDs
+    # Load PSD
     curr_path=inspect.getfile(inspect.currentframe())
     index_path=curr_path.find("analysisutils")
     if psd == "H1":
-        psd=curr_path[:index_path]+"/PSD/LIGO_H1.txt" #deltaF=1./8 Hz
+        psd=curr_path[:index_path]+"/PSD/LIGO_H1.txt"
     if psd == "L1":
         psd=curr_path[:index_path]+"/PSD/LIGO_L1.txt"
     if psd == "V1":
@@ -297,11 +292,13 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         psd=curr_path[:index_path]+"/PSD/CE.txt"
     if psd == "LISA":
             psd=curr_path[:index_path]+"/PSD/LISA.txt"
-    print(f"Integrating from flow={flow} Hz, fhigh={fhigh} Hz")
     if psd == "Flat":
         data = np.ones(len(fvals))
     else:
         frequency, data = resample_psd(psd, np.abs(fvals))
+    if verbose:
+        print(f"Using PSD {psd}")
+        print(f"Integrating from flow={flow} Hz, fhigh={fhigh} Hz")
     # the psd data will be defined over all the frequency, now we have to choose
     index_1 = np.argwhere(np.abs(fvals)>= flow)
     index_2 = np.argwhere(np.abs(fvals)<= fhigh)
@@ -310,17 +307,6 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
     weights = np.zeros(len(data))
     weights[combined] = 1/data[combined]
 
-    if plots:
-        plt.plot(fvals, 1/data)
-        plt.plot(fvals, weights)
-        plt.xlabel("Frequency [Hz]")
-        plt.ylabel("PSD")
-        plt.axvline(x = flow)
-        plt.axvline(x = fhigh)
-        plt.axvline(x = -flow)
-        plt.axvline(x = -fhigh)
-        plt.show()
-    
     # Norms
     norm_1 = np.sqrt(2 * 4 * deltaF * np.sum(wf_1_FD.conj() * wf_1_FD * weights) / len(wf_1_FD)**2 )
     norm_2 = np.sqrt(2 * 4 * deltaF * np.sum(wf_2_FD.conj() * wf_2_FD * weights) / len(wf_1_FD)**2 )
