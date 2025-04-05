@@ -6,7 +6,7 @@
 #   get_detector_frame_modes_from_NR_hdf5 (DONE)
 #   get_model_waveform_polarizations      (DONE)
 #   mismatch                              (DONE)
-#   get_detector_frame_polarizations
+#   get_detector_frame_polarizations      (DONE)
 
 
 import numpy as np
@@ -128,21 +128,21 @@ def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None
 
     # For unit conversion
     MSUN_sec = G/C**3
-    mtot_in_sec = (waveform_object.m1 + waveform_object.m2) * MSUN_sec
-    dist_in_sec = waveform_object.dist/C
+    mtot_in_sec = (waveform_object.m1 + waveform_object.m2) * MSUN_sec * MSUN
+    dist_in_sec = waveform_object.distance/C * MPC
 
     # just to know what time array we are dealing with
     data_1 = h5py.File(waveform_object.NR_hdf5_path)
 
     # mass and fmin (mass set by total mass from the waveform object)
-    mtotal = (waveform_object.m1 + waveform_object.m2)
-    m1 = data_1.attrs["mass1"] * mtotal 
-    m2 = data_1.attrs["mass2"] * mtotal
+    mtotal = (waveform_object.m1 + waveform_object.m2) * MSUN
+    m1 = data_1.attrs["mass1"] * mtotal * MSUN
+    m2 = data_1.attrs["mass2"] * mtotal * MSUN
     fmin = data_1.attrs["f_lower_at_1MSUN"] * MSUN/mtotal
     if verbose:
         print(f"Smallest possible fmin for this waveform {fmin} Hz. fmin at 1 solar mass is {data_1.attrs['f_lower_at_1MSUN']}")
-        a1x, a1y, a1z, a2x, a2y, a2z = lalsim.SimInspiralNRWaveformGetSpinsFromHDF5File(waveform_object.fref, mtotal/lal.MSUN_SI, waveform_object.NR_hdf5_path)
-        print(f"Generating waveform with m1 = {m1/lal.MSUN_SI:0.4f} MSUN, m2 = {m2/lal.MSUN_SI:0.4f} MSUN \n a1 = {a1x, a1y, a1z}, a2 = {a2x, a2y, a2z}\n fmin = {fmin} Hz")
+        a1x, a1y, a1z, a2x, a2y, a2z = lalsim.SimInspiralNRWaveformGetSpinsFromHDF5File(waveform_object.fref, mtotal/MSUN, waveform_object.NR_hdf5_path)
+        print(f"Generating waveform with m1 = {m1/MSUN:0.4f} MSUN, m2 = {m2/MSUN:0.4f} MSUN \n a1 = {a1x, a1y, a1z}, a2 = {a2x, a2y, a2z}\n fmin = {fmin} Hz")
 
     # Which modes to get
     modes_array = []
@@ -223,7 +223,7 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
     if verbose:
         print(f"Using approximant {waveform_object.approximant}")
 
-    hp, hc = lalsim.SimInspiralChooseTDWaveform(waveform_object.m1, waveform_object.m2, waveform_object.a1x, waveform_object.a1y, waveform_object.a1z, waveform_object.a2x, waveform_object.a2y, waveform_object.a2z, waveform_object.distance, waveform_object.inclination, \
+    hp, hc = lalsim.SimInspiralChooseTDWaveform(waveform_object.m1 * MSUN, waveform_object.m2 * MSUN, waveform_object.a1x, waveform_object.a1y, waveform_object.a1z, waveform_object.a2x, waveform_object.a2y, waveform_object.a2z, waveform_object.distance * MPC, waveform_object.inclination, \
     waveform_object.phiref, waveform_object.psi, waveform_object.eccentricity, waveform_object.meanPerAno, waveform_object.deltaT, waveform_object.fmin, waveform_object.fref,
     waveform_object.extra_lal_params, getattr(waveform_object.approximant))
     return hp, hc
