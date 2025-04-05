@@ -229,13 +229,15 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
     return hp, hc
 
 
-def resample_psd(psd, fvals):   #this acts weird due to non integer steps size, need to test it
+def resample_psd(psd, df=None):   #this acts weird due to non integer steps size, need to test it
     """Takes in a PSD which should have two columns, frequnecy and data, and returns it with a new  deltaF"""
     frequency, data = np.loadtxt(psd, delimiter=" ", comments="#",unpack=True)
+    f0, deltaF, f_final = frequency[0], frequency[1]-frequency[0], frequency[-1]
     interp = interpolate.interp1d(frequency, data, fill_value = 'extrapolate')
-    return fvals, interp(fvals)
+    new_frequency = np.arange(f0, f_final+5*df, df or deltaF)
+    return new_frequency, interp(new_frequency)
     
-def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True, plots=False):
+def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True):
     assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1} s, deltaT_2 = {deltaT_2} s.'
     
     # variables for resizing
@@ -272,11 +274,21 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
 
     # FFT
-    wf_1_FD = np.fft.fft(wf_tseries_1)
-    wf_2_FD = np.fft.fft(wf_tseries_2)
-    deltaF  = 1 / (len(waveform_time_series1) * deltaT_1)
-    fvals = np.fft.fftfreq(len(wf_tseries_1), deltaT_1)
+    wf_1_FD_og = np.fft.fft(wf_tseries_1)
+    wf_1_FD =  wf_1_FD_og * deltaT_1
+    wf_1_FD = np.roll(wf_1_FD, len(wf_1_FD)//2) # make it continuous, not following numpy's packaging
+    
+    wf_2_FD_og = np.fft.fft(wf_tseries_2)
+    wf_2_FD = wf_2_FD_og * deltaT_2
+    wf_2_FD = np.roll(wf_2_FD, len(wf_2_FD)//2) # make it continuous, not following numpy's packaging
 
+    T = (len(wf_tseries_1) * deltaT_1)
+    deltaF  = 1 /T
+    n = len(wf_2_FD)
+    fvals_FFT = deltaF*(np.arange(n) - n/2+1) 
+    
+    if verbose:
+        print(f'Rolling amount is {len(wf_1_FD)/2}, time = {T}, deltaF = {deltaF}, ')
     # Load PSD
     curr_path=inspect.getfile(inspect.currentframe())
     index_path=curr_path.find("analysisutils")
@@ -293,29 +305,31 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
     if psd == "LISA":
             psd=curr_path[:index_path]+"/PSD/LISA.txt"
     if psd == "Flat":
-        data = np.ones(len(fvals))
+        frequency = np.arange(flow-10*deltaF, fhigh+10*deltaF, deltaF)
+        data = np.ones(len(frequency))
     else:
-        frequency, data = resample_psd(psd, np.abs(fvals))
+        frequency, data = resample_psd(psd, deltaF)
+    indices = np.arange(len(frequency))
+    indices_integration = indices[np.logical_and(frequency>=flow, frequency<=fhigh)]
     if verbose:
         print(f"Using PSD {psd}")
-        print(f"Integrating from flow={flow} Hz, fhigh={fhigh} Hz")
-    # the psd data will be defined over all the frequency, now we have to choose
-    index_1 = np.argwhere(np.abs(fvals)>= flow)
-    index_2 = np.argwhere(np.abs(fvals)<= fhigh)
-    combined = np.intersect1d(index_1, index_2)
+        print(f"Integrating from flow={frequency[indices_integration[0]]} Hz, fhigh={frequency[indices_integration[-1]]} Hz")
+    weights_one_sided = np.zeros(int(len(wf_2_FD)/2+1))
+    weights_one_sided[indices_integration] = 1/data[indices_integration]
 
-    weights = np.zeros(len(data))
-    weights[combined] = 1/data[combined]
+    weights_two_sided = np.zeros(len(wf_2_FD))
+    weights_two_sided[:len(weights_one_sided)]=weights_one_sided[::-1]    #[-N2--->0]
+    weights_two_sided[len(weights_one_sided)-1:]=weights_one_sided[:-1]   #[0--->N/2)   #zero index filled twice, +N/2 not there
 
     # Norms
-    norm_1 = np.sqrt(2 * 4 * deltaF * np.sum(wf_1_FD.conj() * wf_1_FD * weights) / len(wf_1_FD)**2 )
-    norm_2 = np.sqrt(2 * 4 * deltaF * np.sum(wf_2_FD.conj() * wf_2_FD * weights) / len(wf_1_FD)**2 )
+    norm_1 = np.sqrt(4 * deltaF * np.sum(wf_1_FD.conj() * wf_1_FD * weights_two_sided)).real
+    norm_2 = np.sqrt(4 * deltaF * np.sum(wf_2_FD.conj() * wf_2_FD * weights_two_sided)).real
     if verbose:
         print(f"norm-1 = {norm_1}, norm-2 = {norm_2}")
 
     # IP
-    integrand = 2 * wf_1_FD.conj() * wf_2_FD
-    overlap_time_shift = np.fft.ifft(integrand)/len(integrand) * 2
+    integrand = 4 * np.roll((wf_1_FD.conj() * wf_2_FD * weights_two_sided), -n//2)
+    overlap_time_shift = np.fft.ifft(integrand) * (deltaF * n)
 
     if phase_maximization_trick:
         overlap_time_series = np.abs(overlap_time_shift)
@@ -324,6 +338,10 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
     
     time_max_match = np.max(overlap_time_series)
     if output_overlap_time_series:
-        return 1 - time_max_match, overlap_time_series
+        if verbose:
+            max_index = np.argmax(overlap_time_series)
+            print(f'Max overlap occurs at time shift of {overlap_time_series[max_index]} s')
+        tvals = np.arange(len(overlap_time_series))*deltaT_1
+        return 1 - time_max_match/norm_1/norm_2, [tvals, overlap_time_series]
     else:
-        return 1 - time_max_match
+        return 1 - time_max_match/norm_1/norm_2
