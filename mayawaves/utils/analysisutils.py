@@ -237,7 +237,7 @@ def resample_psd(psd, df=None):   #this acts weird due to non integer steps size
     new_frequency = np.arange(f0, f_final+5*df, df or deltaF)
     return new_frequency, interp(new_frequency)
     
-def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True, integral_factor = 4):
+def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True, integral_factor=4):
     assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1} s, deltaT_2 = {deltaT_2} s.'
     
     # variables for resizing
