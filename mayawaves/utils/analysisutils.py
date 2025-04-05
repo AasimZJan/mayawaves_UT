@@ -237,7 +237,7 @@ def resample_psd(psd, df=None):   #this acts weird due to non integer steps size
     new_frequency = np.arange(f0, f_final+5*df, df or deltaF)
     return new_frequency, interp(new_frequency)
     
-def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True):
+def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_overlap_time_series=False, verbose=True, integral_factor = 4):
     assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1} s, deltaT_2 = {deltaT_2} s.'
     
     # variables for resizing
@@ -275,15 +275,15 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
 
     # FFT
     wf_1_FD_og = np.fft.fft(wf_tseries_1)
-    wf_1_FD =  wf_1_FD_og * deltaT_1
+    wf_1_FD =  wf_1_FD_og * deltaT_1 # FFT output from numpy is missing deltaT
     wf_1_FD = np.roll(wf_1_FD, len(wf_1_FD)//2) # make it continuous, not following numpy's packaging
     
     wf_2_FD_og = np.fft.fft(wf_tseries_2)
-    wf_2_FD = wf_2_FD_og * deltaT_2
+    wf_2_FD = wf_2_FD_og * deltaT_2 # FFT output from numpy is missing deltaT
     wf_2_FD = np.roll(wf_2_FD, len(wf_2_FD)//2) # make it continuous, not following numpy's packaging
 
     T = (len(wf_tseries_1) * deltaT_1)
-    deltaF  = 1 /T
+    deltaF  = 1/T
     n = len(wf_2_FD)
     fvals_FFT = deltaF*(np.arange(n) - n/2+1) 
     
@@ -322,13 +322,14 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
     weights_two_sided[len(weights_one_sided)-1:]=weights_one_sided[:-1]   #[0--->N/2)   #zero index filled twice, +N/2 not there
 
     # Norms
-    norm_1 = np.sqrt(4 * deltaF * np.sum(wf_1_FD.conj() * wf_1_FD * weights_two_sided)).real
-    norm_2 = np.sqrt(4 * deltaF * np.sum(wf_2_FD.conj() * wf_2_FD * weights_two_sided)).real
+    # This integration is from -fmax to fmax, so the integral_factor should really be 2. It doesn't matter here since the factors cancel out and mismatch stays the same.
+    norm_1 = np.sqrt(integral_factor * deltaF * np.sum(wf_1_FD.conj() * wf_1_FD * weights_two_sided)).real
+    norm_2 = np.sqrt(integral_factor * deltaF * np.sum(wf_2_FD.conj() * wf_2_FD * weights_two_sided)).real
     if verbose:
         print(f"norm-1 = {norm_1}, norm-2 = {norm_2}")
 
     # IP
-    integrand = 4 * np.roll((wf_1_FD.conj() * wf_2_FD * weights_two_sided), -n//2)
+    integrand = integral_factor * np.roll((wf_1_FD.conj() * wf_2_FD * weights_two_sided), -n//2)
     overlap_time_shift = np.fft.ifft(integrand) * (deltaF * n)
 
     if phase_maximization_trick:
