@@ -123,25 +123,29 @@ def taper_time_series(time_series, taper_percent=1, taper_type="cosine"):
         time_series.data.data.complex[:ntaper]*=vectaper
     return time_series
 
+def Ylm(inclination, phiref, l ,m, s = -2):
+        """Returns spin weighted spherical harmonics, s is to -2 as default."""
+        return lal.SpinWeightedSphericalHarmonic(inclination,phiref,s,l,m)
+
 def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None, include_m_0_modes=False, waveform_convention=1, verbose=False):
     assert waveform_convention in [1, -1], "Waveform convention can either be 1 or -1."
 
     # For unit conversion
     MSUN_sec = G/C**3
     mtot_in_sec = (waveform_object.m1 + waveform_object.m2) * MSUN_sec * MSUN
-    dist_in_sec = waveform_object.distance/C * MPC
+    dist_in_sec = waveform_object.distance*MPC/C
 
     # just to know what time array we are dealing with
     data_1 = h5py.File(waveform_object.NR_hdf5_path)
 
     # mass and fmin (mass set by total mass from the waveform object)
-    mtotal = (waveform_object.m1 + waveform_object.m2) * MSUN
-    m1 = data_1.attrs["mass1"] * mtotal * MSUN
-    m2 = data_1.attrs["mass2"] * mtotal * MSUN
+    mtotal = (waveform_object.m1 + waveform_object.m2)*MSUN
+    m1 = data_1.attrs["mass1"] * mtotal 
+    m2 = data_1.attrs["mass2"] * mtotal
     fmin = data_1.attrs["f_lower_at_1MSUN"] * MSUN/mtotal
     if verbose:
         print(f"Smallest possible fmin for this waveform {fmin} Hz. fmin at 1 solar mass is {data_1.attrs['f_lower_at_1MSUN']}")
-        a1x, a1y, a1z, a2x, a2y, a2z = lalsim.SimInspiralNRWaveformGetSpinsFromHDF5File(waveform_object.fref, mtotal/MSUN, waveform_object.NR_hdf5_path)
+        a1x, a1y, a1z, a2x, a2y, a2z = lalsim.SimInspiralNRWaveformGetSpinsFromHDF5File(waveform_object.fref, mtotal/lal.MSUN_SI, waveform_object.NR_hdf5_path)
         print(f"Generating waveform with m1 = {m1/MSUN:0.4f} MSUN, m2 = {m2/MSUN:0.4f} MSUN \n a1 = {a1x, a1y, a1z}, a2 = {a2x, a2y, a2z}\n fmin = {fmin} Hz")
 
     # Which modes to get
@@ -191,10 +195,29 @@ def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None
     
     return hlm
 
+def get_detector_frame_polarizations_from_NR_hdf5(waveform_object,  lmax=None, modes=None, include_m_0_modes=False, waveform_convention=1, verbose=False):
+        """Takes in a NR waveform in  LVK hdf5 format, binary object and total mass in kg (default is 100 MSUN) and generates a TD waveform but as a lal REAL8TIMESeries. \
+            The binary object that you use to call this function will populate extrinsic and detection variables. \
+            The h5 file only has mass (total mass = 1) and spin information.
+        Argument = self, path/to/NR/hdf5 file (string), mtotal (in kg) (default is 100 MSUN)
+        Output = h_plus(t) (REAL8TimeSeries), h_cross(t) (REAL8TimeSeries) and time array (0 at peak) (numpy array)"""
+        hlm = get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=lmax, modes=modes, include_m_0_modes=include_m_0_modes, waveform_convention=waveform_convention, verbose=verbose)
+        keys = list(hlm.keys())
+        for i in range(len(keys)):
+            if i == 0 :
+                tmp = hlm[keys[i]].data.data * Ylm(waveform_object.inclination,waveform_object.phiref, keys[i][0], keys[i][1])
+            else:
+                tmp +=hlm[keys[i]].data.data * Ylm(waveform_object.inclination,waveform_object.phiref, keys[i][0], keys[i][1])
 
-def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, verbose=True):
+            h_p = lal.CreateREAL8TimeSeries("hlm",0,0, waveform_object.deltaT,lal.DimensionlessUnit,len(tmp))
+            h_p.data.data = np.real(tmp)
+            h_c = lal.CreateREAL8TimeSeries("hlm",0,0, waveform_object.deltaT,lal.DimensionlessUnit,len(tmp))
+            h_c.data.data = -np.imag(tmp)
+        return h_p, h_c
+
+def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, verbose=True, include_negative_m_modes=False):
     modes_array = []
-    if modes==None and lmax is not None:
+    if modes==None and lmax is not None and include_negative_m_modes==True:
         for l in range(2,lmax+1):
             for m in range(-l,0):
                 if waveform_object.approximant == "NRHybSur3dq8" and l==4 and (m==0 or m==-1): #Throws an error for these modes instead of pass nothing like a normal person
@@ -204,10 +227,16 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
                 if waveform_object.approximant == "NRHybSur3dq8" and l==4 and (m==0 or m==1): #Throws an error for these modes instead of pass nothing like a normal person
                     continue
                 modes_array.append((l,m))
-    elif modes is not None and lmax is None:
+    if modes==None and lmax is not None and include_negative_m_modes==False:
+        for l in range(2,lmax+1):
+            for m in range(1,l+1):
+                if waveform_object.approximant == "NRHybSur3dq8" and l==4 and (m==0 or m==1): #Throws an error for these modes instead of pass nothing like a normal person
+                    continue
+                modes_array.append((l,m))
+    if modes is not None and lmax is None:
         for j in modes:
             modes_array.append(j)
-    else:
+    if modes is not None and lmax is not None:
         print("Inconsistent input, use either lmax or modes.")
         sys.exit()
     
@@ -215,17 +244,18 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
         print(f"Using modes {modes_array}")
 
     ma = lalsim.SimInspiralCreateModeArray()
-    for mode in modes_array:
-        l,m = mode
-        lalsim.SimInspiralModeArrayActivateMode(ma, l, m)
-    lalsim.SimInspiralWaveformParamsInsertModeArray(waveform_object.extra_lal_params, ma)
+    if modes or lmax:
+        for mode in modes_array:
+            l,m = mode
+            lalsim.SimInspiralModeArrayActivateMode(ma, l, m)
+        lalsim.SimInspiralWaveformParamsInsertModeArray(waveform_object.extra_lal_params, ma)
 
     if verbose:
         print(f"Using approximant {waveform_object.approximant}")
 
-    hp, hc = lalsim.SimInspiralChooseTDWaveform(waveform_object.m1 * MSUN, waveform_object.m2 * MSUN, waveform_object.a1x, waveform_object.a1y, waveform_object.a1z, waveform_object.a2x, waveform_object.a2y, waveform_object.a2z, waveform_object.distance * MPC, waveform_object.inclination, \
+    hp, hc = lalsim.SimInspiralChooseTDWaveform(waveform_object.m1*MSUN, waveform_object.m2*MSUN, waveform_object.a1x, waveform_object.a1y, waveform_object.a1z, waveform_object.a2x, waveform_object.a2y, waveform_object.a2z, waveform_object.distance*MPC, waveform_object.inclination, \
     waveform_object.phiref, waveform_object.psi, waveform_object.eccentricity, waveform_object.meanPerAno, waveform_object.deltaT, waveform_object.fmin, waveform_object.fref,
-    waveform_object.extra_lal_params, getattr(waveform_object.approximant))
+    waveform_object.extra_lal_params, getattr(lalsim,waveform_object.approximant))
     return hp, hc
 
 
