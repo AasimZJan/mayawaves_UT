@@ -1,14 +1,3 @@
-# what is the plan?
-# waveform object that will save parameters
-#   print function
-# functions
-#   taper_time_series                     (DONE)
-#   get_detector_frame_modes_from_NR_hdf5 (DONE)
-#   get_model_waveform_polarizations      (DONE)
-#   mismatch                              (DONE)
-#   get_detector_frame_polarizations      (DONE)
-
-
 import numpy as np
 import lal
 import lalsimulation as lalsim
@@ -24,9 +13,9 @@ G = lal.G_SI # gravitational constants in m^3/kg/s^2
 C = lal.C_SI # speed of light in m/s
 
 class waveform:
-    """Waveform class to store binary parameters and metadata. Should used in conjuction with functions defined here.
-    Tip: wf.__dict__  should give you the list of attributes/parameters (here wf is the waveform object).
-    """
+    """Waveform class to store binary system parameters and metadata.
+
+    Attributes can be accessed as a dictionary using `wf.__dict__`."""
     def __init__(self,  
                 m1= 50,           # MSUN
                 m2= 50,           # MSUN
@@ -86,11 +75,15 @@ class waveform:
         self.NR_hdf5_path=NR_hdf5_path
 
 def get_taper_vector(taper_type, length):
-    """Generates a tapering vector based on the specified taper type.
+    """
+    Generate a taper window for a signal to minimize spectral leakage.
 
     Args:
-        taper_type (str): The type of taper to generate. Currently supported type is "cosine".
-        length (int): The length of the taper vector to be generated.    
+        taper_type (str): Taper type. Currently only supports 'cosine'.
+        length (int): Length of the taper window.
+
+    Returns:
+        numpy.ndarray: Array containing the taper values.
     """
     length = int(length)
     if taper_type=="cosine":
@@ -100,12 +93,16 @@ def get_taper_vector(taper_type, length):
         print(f"Tapering type '{taper_type}' not yet implemented/")
 
 def taper_time_series(time_series, taper_percent=1, taper_type="cosine"):
-    """Applies a tapering function to a time series to gradually increase amplitude at the starting edge.
+    """
+    Apply a tapering window to the beginning a time series.
 
     Args:
-        time_series (numpy.ndarray, lal.REAL8TimeSeries, or lal.COMPLEX16TimeSeries): The input time series to be tapered. It can be one of the following.
-        taper_percent (float, optional): The percentage of the time series length to taper at the beginning and end. Default is 1%.
-        taper_type (str, optional): The type of taper to apply. Default is "cosine".
+        time_series (numpy.ndarray or lal.TimeSeries): The signal to taper.
+        taper_percent (float): Percentage of the data length to taper.
+        taper_type (str): Type of taper (default "cosine").
+
+    Returns:
+        Same type as input: Tapered time series.
     """
     assert 0<=taper_percent <=100, "taper_percent should be between 0 and 100."
     if isinstance(time_series, np.ndarray):
@@ -124,10 +121,36 @@ def taper_time_series(time_series, taper_percent=1, taper_type="cosine"):
     return time_series
 
 def Ylm(inclination, phiref, l ,m, s = -2):
-        """Returns spin weighted spherical harmonics, s is to -2 as default."""
-        return lal.SpinWeightedSphericalHarmonic(inclination,phiref,s,l,m)
+    """
+    Compute the spin-weighted spherical harmonic.
+
+    Args:
+        inclination (float): Inclination angle (rad).
+        phiref (float): Reference phase (rad).
+        l (int): Spherical harmonic index.
+        m (int): Azimuthal index.
+        s (int): Spin weight (default -2 for GW).
+
+    Returns:
+        complex: The value of the spherical harmonic.
+    """
+    return lal.SpinWeightedSphericalHarmonic(inclination,phiref,s,l,m)
 
 def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None, include_m_0_modes=False, waveform_convention=1, verbose=False):
+    """
+    Extract (l, m) modes from an NR HDF5 file and return them as lal.COMPLEX16TimeSeries.
+
+    Args:
+        waveform_object (waveform): Object containing system and waveform parameters.
+        lmax (int, optional): Maximum l to include.
+        modes (list, optional): List of (l, m) mode tuples.
+        include_m_0_modes (bool, optional): Whether to include m=0 modes.
+        waveform_convention (int, optional): +1 or -1 phase convention.
+        verbose (bool): Print verbose output.
+
+    Returns:
+        dict: Dictionary of {(l, m): COMPLEX16TimeSeries} pairs.
+    """
     assert waveform_convention in [1, -1], "Waveform convention can either be 1 or -1."
 
     # For unit conversion
@@ -196,26 +219,44 @@ def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None
     return hlm
 
 def get_detector_frame_polarizations_from_NR_hdf5(waveform_object,  lmax=None, modes=None, include_m_0_modes=False, waveform_convention=1, verbose=False):
-        """Takes in a NR waveform in  LVK hdf5 format, binary object and total mass in kg (default is 100 MSUN) and generates a TD waveform but as a lal REAL8TIMESeries. \
-            The binary object that you use to call this function will populate extrinsic and detection variables. \
-            The h5 file only has mass (total mass = 1) and spin information.
-        Argument = self, path/to/NR/hdf5 file (string), mtotal (in kg) (default is 100 MSUN)
-        Output = h_plus(t) (REAL8TimeSeries), h_cross(t) (REAL8TimeSeries) and time array (0 at peak) (numpy array)"""
-        hlm = get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=lmax, modes=modes, include_m_0_modes=include_m_0_modes, waveform_convention=waveform_convention, verbose=verbose)
-        keys = list(hlm.keys())
-        for i in range(len(keys)):
-            if i == 0 :
-                tmp = hlm[keys[i]].data.data * Ylm(waveform_object.inclination,waveform_object.phiref, keys[i][0], keys[i][1])
-            else:
-                tmp +=hlm[keys[i]].data.data * Ylm(waveform_object.inclination,waveform_object.phiref, keys[i][0], keys[i][1])
+    """
+    Generate plus and cross polarizations from NR HDF5 modes for a given binary configuration.
 
-            h_p = lal.CreateREAL8TimeSeries("hlm",0,0, waveform_object.deltaT,lal.DimensionlessUnit,len(tmp))
-            h_p.data.data = np.real(tmp)
-            h_c = lal.CreateREAL8TimeSeries("hlm",0,0, waveform_object.deltaT,lal.DimensionlessUnit,len(tmp))
-            h_c.data.data = -np.imag(tmp)
-        return h_p, h_c
+    Args:
+        waveform_object (waveform): The waveform object with parameters and HDF5 path.
+        lmax, modes, include_m_0_modes, waveform_convention, verbose: See `get_detector_frame_modes_from_NR_hdf5`.
+
+    Returns:
+        tuple: (h_plus, h_cross) as lal.REAL8TimeSeries.
+    """
+    hlm = get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=lmax, modes=modes, include_m_0_modes=include_m_0_modes, waveform_convention=waveform_convention, verbose=verbose)
+    keys = list(hlm.keys())
+    for i in range(len(keys)):
+        if i == 0 :
+            tmp = hlm[keys[i]].data.data * Ylm(waveform_object.inclination,waveform_object.phiref, keys[i][0], keys[i][1])
+        else:
+            tmp +=hlm[keys[i]].data.data * Ylm(waveform_object.inclination,waveform_object.phiref, keys[i][0], keys[i][1])
+
+        h_p = lal.CreateREAL8TimeSeries("hlm",0,0, waveform_object.deltaT,lal.DimensionlessUnit,len(tmp))
+        h_p.data.data = np.real(tmp)
+        h_c = lal.CreateREAL8TimeSeries("hlm",0,0, waveform_object.deltaT,lal.DimensionlessUnit,len(tmp))
+        h_c.data.data = -np.imag(tmp)
+    return h_p, h_c
 
 def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, verbose=True, include_negative_m_modes=False):
+    """
+    Generate time-domain polarizations (hp, hc) for waveform models using LALSimulation.
+
+    Args:
+        waveform_object (waveform): The waveform object with model and system parameters.
+        modes (list): Specific modes to include.
+        lmax (int): Maximum l value for mode summation.
+        verbose (bool): Verbosity.
+        include_negative_m_modes (bool): Whether to include negative-m modes.
+
+    Returns:
+        tuple: (hp, hc) as lal.REAL8TimeSeries.
+    """
     modes_array = []
     if modes==None and lmax is not None and include_negative_m_modes==True:
         for l in range(2,lmax+1):
@@ -260,7 +301,16 @@ def get_model_waveform_polarizations(waveform_object, modes=None, lmax=None, ver
 
 
 def resample_psd(psd, df=None):   #this acts weird due to non integer steps size, need to test it
-    """Takes in a PSD which should have two columns, frequnecy and data, and returns it with a new  deltaF"""
+    """
+    Resample a power spectral density (PSD) to a new frequency resolution.
+
+    Args:
+        psd (str): Path to PSD text file with frequency and PSD values.
+        df (float): Desired frequency spacing.
+
+    Returns:
+        tuple: (new_frequency, new_psd) arrays.
+    """
     frequency, data = np.loadtxt(psd, delimiter=" ", comments="#",unpack=True)
     f0, deltaF, f_final = frequency[0], frequency[1]-frequency[0], frequency[-1]
     interp = interpolate.interp1d(frequency, data, fill_value = 'extrapolate')
@@ -268,6 +318,24 @@ def resample_psd(psd, df=None):   #this acts weird due to non integer steps size
     return new_frequency, interp(new_frequency)
     
 def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_mismatch_time_series=False, verbose=True, integral_factor=4):
+    """
+    Compute the mismatch between two time-domain waveforms using their FFTs and a detector PSD.
+
+    Args:
+        waveform_time_series1, waveform_time_series2 (np.ndarray): Complex time-domain data.
+        deltaT_1, deltaT_2 (float): Sampling intervals.
+        psd (str): detector name.
+        flow (float): Lower frequency cutoff.
+        fhigh (float): Upper frequency cutoff.
+        resize (str, optional): How to resize waveforms ("min", "max", or "power_2"). Stick to "power_2", unless absolutely necessary.
+        phase_maximization_trick (bool): If True, marginalize over phase. Approximation fails if higher order mode content is significant.
+        output_mismatch_time_series (bool): If True, return time-dependent mismatch.
+        verbose (bool): Verbosity.
+        integral_factor (float, optional): The co-efficient for integral. Should be 2 but the mismatch values are independent of this choice as the factors cancel out.
+
+    Returns:
+        float: Mismatch value.
+    """
     assert deltaT_1 == deltaT_2, f'deltaT of two time series should be the same, you have entered deltaT_1 = {deltaT_1} s, deltaT_2 = {deltaT_2} s.'
     
     # variables for resizing
