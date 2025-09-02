@@ -52,7 +52,7 @@ class Coalescence:
             self.__final_compact_object_index = 2
 
         if 'radiative' in self.__h5_file:
-            self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"])
+            self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"], self.__h5_file['TwoPunctures'])
 
     @property
     def name(self) -> str:
@@ -83,11 +83,7 @@ class Coalescence:
         if 'par_content' in parfile_group.attrs:
             parfile_dict['par'] = parfile_group.attrs['par_content']
         return parfile_dict
-    @property
-    def TwoPunctures_content(self) -> str:
-        if 'TwoPunctures' not in self.__h5_file:
-            return None
-        return self.__h5_file['TwoPunctures']
+
     @property
     def h5_filepath(self) -> str:
         """The path to the h5 file containing the coalescence data."""
@@ -386,6 +382,32 @@ class Coalescence:
 
         """
         self.radiationbundle.radius_for_extrapolation = extraction_radius
+    
+    @property
+    def use_extrapolation_method(self):
+        return self.radiationbundle.use_extrapolation_method
+    
+    @use_extrapolation_method.setter
+    def use_extrapolation_method(self, extrapolation_metod: str):
+        allowed_methods = ['perturbative', 'power']
+        if extrapolation_metod not in allowed_methods:
+            warnings.warn(f"Use one of these methods: {allowed_methods}, defaulting to 'perturbative'")
+            self.radiationbundle.use_extrapolation_method = 'perturbative'
+        self.radiationbundle.use_extrapolation_method = extrapolation_metod
+
+    @property
+    def radii_list_for_power_method(self):
+        return self.radiationbundle.radii_list_for_power_method
+    @radii_list_for_power_method.setter
+    def radii_list_for_power_method(self, radii_list: list | np.ndarray):
+        self.radiationbundle.radii_list_for_power_method = radii_list
+    
+    @property
+    def order_for_perturbative_method(self):
+        return self.radiationbundle.order_for_perturbative_method
+    @order_for_perturbative_method.setter
+    def order_for_perturbative_method(self, order: int):
+        self.radiationbundle.order_for_perturbative_method = order
 
     def recoil_velocity(self, km_per_sec: bool = False) -> np.ndarray:
         """Kick vector of the final object

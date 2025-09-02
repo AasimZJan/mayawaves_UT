@@ -7,7 +7,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt
 from scipy.signal.windows import blackmanharris
 import math
-
+import configparser
 
 class Frame(Enum):
     RAW = 1
@@ -17,14 +17,18 @@ class Frame(Enum):
 class RadiationBundle:
     """Class for interacting with all radiative information from the simulation."""
 
-    def __init__(self, radiation_spheres: dict):
+    def __init__(self, radiation_spheres: dict, TwoPunctures_content_dict):
         self.__radiation_spheres = radiation_spheres
         self.__extrapolated_sphere = None
         self.__radius_for_extrapolation = None
+        self.__use_extrapolation_method = None
+        self.__radii_list_for_power_method = None
+        self.__order_for_perturbative_method = None
+        self.__TwoPunctures_content = TwoPunctures_content_dict
         self.__frame = Frame.RAW
 
     @staticmethod
-    def create_radiation_bundle(radiation_group: h5py.Group):
+    def create_radiation_bundle(radiation_group: h5py.Group, TwoPunctures_content:h5py.Group) :
         """Create a RadiationBundle
 
         Args:
@@ -53,7 +57,11 @@ class RadiationBundle:
         if len(radiation_spheres) == 0:
             warnings.warn('There is no data to create a radiation sphere and therefore a radiation bundle from.')
             return None
-        return RadiationBundle(radiation_spheres=radiation_spheres)
+        TwoPunctures_content_raw = TwoPunctures_content['content'][()].decode('utf-8')
+        config = configparser.ConfigParser()
+        config.read_string(TwoPunctures_content_raw)
+        config_dict = {s: dict(config[s]) for s in config.sections()}
+        return RadiationBundle(radiation_spheres=radiation_spheres, TwoPunctures_content_dict = config_dict)
 
     @property
     def frame(self) -> Frame:
@@ -93,6 +101,41 @@ class RadiationBundle:
         return self.__radiation_spheres
 
     @property
+    def TwoPunctures_content(self):
+        return self.__TwoPunctures_content
+    @property
+    def use_extrapolation_method(self):
+        if self.__use_extrapolation_method is None:
+            self.__use_extrapolation_method = 'perturbative'
+        return self.__use_extrapolation_method
+    @use_extrapolation_method.setter
+    def use_extrapolation_method(self, extrapolation_metod: str):
+        allowed_methods = ['perturbative', 'power']
+        if extrapolation_metod not in allowed_methods:
+            warnings.warn(f"Use one of these methods: {allowed_methods}, defaulting to 'perturbative'")
+            self.__use_extrapolation_method = 'perturbative'
+        else:
+            self.__use_extrapolation_method = extrapolation_metod
+
+    @property
+    def radii_list_for_power_method(self):
+        if self.__radii_list_for_power_method is None:
+            self.__radii_list_for_power_method = sorted(list(self.radiation_spheres.keys()))
+        return self.__radii_list_for_power_method
+    @radii_list_for_power_method.setter
+    def radii_list_for_power_method(self, radii_list: list | np.ndarray):
+        self.__radii_list_for_power_method = radii_list
+    
+    @property
+    def order_for_perturbative_method(self):
+        if self.__order_for_perturbative_method is None:
+            self.__order_for_perturbative_method = 2
+        return self.__order_for_perturbative_method
+    @order_for_perturbative_method.setter
+    def order_for_perturbative_method(self, order: int):
+        self.__order_for_perturbative_method = order
+
+    @property
     def extrapolated_sphere(self):
         """The RadiationSphere with extrapolated radius. All :math:`\Psi_4` data has been extrapolated to infinite
         radius using the method described in https://arxiv.org/abs/1008.4360 and https://arxiv.org/abs/1108.4421."""
@@ -130,6 +173,9 @@ class RadiationBundle:
         self.__radius_for_extrapolation = radius
         # reset extrapolated sphere so it uses the new radiation radius for extrapolation
         self.__extrapolated_sphere = None
+
+
+
 
     @property
     def l_max(self) -> int:
