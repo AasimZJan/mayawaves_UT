@@ -2051,6 +2051,7 @@ def create_h5_from_simulation(raw_directory: str, output_directory: str, catalog
     # store TwoPunctures file
     print("storing TwoPunctures file")
     _store_TwoPunctures_file(TwoPunctures_content, h5_file)
+    
     # get all relevant filepaths
     if "parfile" in h5_file.keys():
         if 'par_content'in h5_file["parfile"].attrs:
