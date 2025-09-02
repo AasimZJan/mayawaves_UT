@@ -83,7 +83,11 @@ class Coalescence:
         if 'par_content' in parfile_group.attrs:
             parfile_dict['par'] = parfile_group.attrs['par_content']
         return parfile_dict
-
+    @property
+    def TwoPunctures_content(self) -> str:
+        if 'TwoPunctures' not in self.__h5_file:
+            return None
+        return self.__h5_file['TwoPunctures']
     @property
     def h5_filepath(self) -> str:
         """The path to the h5 file containing the coalescence data."""
