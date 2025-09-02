@@ -1045,6 +1045,18 @@ def _simulation_name(raw_directory: str) -> str:
     simulation_name = raw_directory.split('/')[-1]
     return simulation_name
 
+def _get_TwoPunctures_content(raw_directory: str):
+    directory_name = raw_directory.split('/')[-1]
+    TwoPunctures_basepath = raw_directory + '/output-0000/' + directory_name 
+    TwoPuncturesfile_path = TwoPunctures_basepath + '/TwoPunctures.bbh'
+    if os.path.exists(TwoPuncturesfile_path):
+        with open(TwoPuncturesfile_path, 'r') as f:
+            content = f.read()
+        return content
+    else:
+        warnings.warn(f"TwoPunctures.bbh does not exist in {TwoPunctures_basepath}")
+        return None
+    
 def _get_parameter_file_name_and_content(raw_directory: str) -> tuple:
     """Store the parameter file in the h5 file
 
@@ -1215,6 +1227,13 @@ def _store_parameter_file(parfile_dict: dict, h5_file: h5py.File):
 
     if "rpar_content" in parfile_dict:
         parfile_group.attrs['rpar_content'] = parfile_dict['rpar_content']
+
+def _store_TwoPunctures_file(TwoPunctures_content:str, h5_file: h5py.File):
+    TwoPunctures_group = h5_file.create_group('TwoPunctures')
+    if TwoPunctures_content is not None:
+        TwoPunctures_group['content'] = TwoPunctures_content
+    else:
+        TwoPunctures_group['content'] = 'N/A'
 
 def _all_relevant_data_filepaths(raw_directory: str, parameter_file: str, parameter_file_name_base: str) -> dict:
     """Dictionary of all relevant data files.
@@ -1998,6 +2017,7 @@ def create_h5_from_simulation(raw_directory: str, output_directory: str, catalog
 
     simulation_name = _simulation_name(raw_directory)
     parameter_file_name_base, parameter_file_dict = _get_parameter_file_name_and_content(raw_directory)
+    TwoPunctures_content = _get_TwoPunctures_content(raw_directory)
 
     if catalog_id is not None:
         h5_filename = os.path.join(output_directory, catalog_id + ".h5")
@@ -2011,6 +2031,9 @@ def create_h5_from_simulation(raw_directory: str, output_directory: str, catalog
     print("storing parameter file")
     _store_parameter_file(parameter_file_dict, h5_file)
 
+    # store TwoPunctures file
+    print("storing TwoPunctures file")
+    _store_TwoPunctures_file(TwoPunctures_content, h5_file)
     # get all relevant filepaths
     if "parfile" in h5_file.keys():
         if 'par_content'in h5_file["parfile"].attrs:
