@@ -8,6 +8,8 @@ from scipy.signal import butter, filtfilt
 from scipy.signal.windows import blackmanharris
 import math
 import configparser
+from mayawaves.utils.extrapolationutils import extrapolate_using_power_method
+
 
 class Frame(Enum):
     RAW = 1
@@ -660,11 +662,17 @@ class RadiationBundle:
             order (:obj:`int`, optional): the extrapolation order. Defaults to 2.
 
         """
-        radiation_sphere = self.radiation_spheres[self.radius_for_extrapolation]
-        extrap_sphere = radiation_sphere.get_extrapolated_sphere(order=order)
-        if extrap_sphere is None:
-            return
-        self.__extrapolated_sphere = extrap_sphere
+        if self.use_extrapolation_method == 'power':
+            extrap_sphere= extrapolate_using_power_method(self)
+            if extrap_sphere is None:
+                return
+            self.__extrapolated_sphere = extrap_sphere
+        elif self.use_extrapolation_method == 'perturbative':
+            radiation_sphere = self.radiation_spheres[self.radius_for_extrapolation]
+            extrap_sphere = radiation_sphere.get_extrapolated_sphere(order=self.order_for_perturbative_method)
+            if extrap_sphere is None:
+                return
+            self.__extrapolated_sphere = extrap_sphere
 
 
 class RadiationSphere:
