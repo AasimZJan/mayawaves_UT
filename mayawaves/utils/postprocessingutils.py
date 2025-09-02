@@ -1045,10 +1045,20 @@ def _simulation_name(raw_directory: str) -> str:
     simulation_name = raw_directory.split('/')[-1]
     return simulation_name
 
-def _get_TwoPunctures_content(raw_directory: str):
+def _get_TwoPunctures_content(raw_directory: str) -> str:
+    """Retrieve the content of the TwoPunctures.bbh file from a simulation directory.
+
+    Args:
+        raw_directory (str): the directory that contains all simulation data
+
+    Returns:
+        str | None: The content of the `TwoPunctures.bbh` file if found,
+        otherwise None.
+    """
     directory_name = raw_directory.split('/')[-1]
     TwoPunctures_basepath = raw_directory + '/output-0000/' + directory_name 
     TwoPuncturesfile_path = TwoPunctures_basepath + '/TwoPunctures.bbh'
+
     if os.path.exists(TwoPuncturesfile_path):
         with open(TwoPuncturesfile_path, 'r') as f:
             content = f.read()
@@ -1229,11 +1239,18 @@ def _store_parameter_file(parfile_dict: dict, h5_file: h5py.File):
         parfile_group.attrs['rpar_content'] = parfile_dict['rpar_content']
 
 def _store_TwoPunctures_file(TwoPunctures_content:str, h5_file: h5py.File):
+    """Store the TwoPunctures.bbh file content in the h5 file. NA if file not found.
+
+    Args:
+        TwoPunctures_content (str): The content of the `TwoPunctures.bbh` file,
+            or None if the file was not found.
+        h5_file (h5py.File): The HDF5 file to store the TwoPunctures content in.
+    """
     TwoPunctures_group = h5_file.create_group('TwoPunctures')
     if TwoPunctures_content is not None:
         TwoPunctures_group['content'] = TwoPunctures_content
     else:
-        TwoPunctures_group['content'] = 'N/A'
+        TwoPunctures_group['content'] = 'NA'
 
 def _all_relevant_data_filepaths(raw_directory: str, parameter_file: str, parameter_file_name_base: str) -> dict:
     """Dictionary of all relevant data files.
