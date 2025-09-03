@@ -4,7 +4,8 @@ import numpy as np
 import math
 import scipy.optimize
 import scipy.interpolate
-from mayawaves.radiation import *
+from mayawaves.radiation import RadiationMode, RadiationSphere
+
 def RadialToTortoise(r, M):
     """
     Convert the radial coordinate to the tortoise coordinate
@@ -336,6 +337,6 @@ def extrapolate_using_power_method(radiation_bundle):
 
         #extrapolated_strains[el,em] = np.column_stack((t, radially_extrapolated_h_plus, radially_extrapolated_h_cross))
         extrapolated_strains[(el, em)] = RadiationMode(psi4_real=None, psi4_imaginary=None, l=el, m=em,
-                             radius=0.0, time=t, extrapolated=True, strain_plus=radially_extrapolated_h_plus, strain_cross=radially_extrapolated_h_cross)
+                             rad=0.0, time=t, extrapolated=True, strain_plus=radially_extrapolated_h_plus, strain_cross=radially_extrapolated_h_cross)
     return RadiationSphere(mode_dict=extrapolated_strains, time=t, radius=0.0,
                                               extrapolated=True)

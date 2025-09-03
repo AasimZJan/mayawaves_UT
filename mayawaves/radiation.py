@@ -8,8 +8,6 @@ from scipy.signal import butter, filtfilt
 from scipy.signal.windows import blackmanharris
 import math
 import configparser
-from mayawaves.utils.extrapolationutils import extrapolate_using_power_method
-
 
 class Frame(Enum):
     RAW = 1
@@ -663,6 +661,7 @@ class RadiationBundle:
 
         """
         if self.use_extrapolation_method == 'power':
+            from mayawaves.utils.extrapolationutils import extrapolate_using_power_method
             extrap_sphere= extrapolate_using_power_method(self)
             if extrap_sphere is None:
                 return
