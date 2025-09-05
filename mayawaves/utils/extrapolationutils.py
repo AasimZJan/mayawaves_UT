@@ -1,101 +1,186 @@
-# File for extrapolation 
-
 import numpy as np
 import math
 import scipy.optimize
 import scipy.interpolate
 from mayawaves.radiation import RadiationMode, RadiationSphere
 
-def RadialToTortoise(r, M):
+###########################################################################################
+# Psi4 to strain conversion functions
+###########################################################################################
+def get_Fourier_Transform(time_vals, time_series):
     """
-    Convert the radial coordinate to the tortoise coordinate
+    Compute the Fourier Transform of a uniformly spaced time series.
 
-    r = radial coordinate
-    M = ADMMass used to convert coordinate
-    return = tortoise coordinate value
+    Args:
+        time_vals (array-like): Array of time points, must be uniformly spaced.
+        time_series (array-like): Time series of which you want to compute FFT.
+
+    Returns:
+        tuple: (frequency_vals, frequency_series) arrays, both centered so that 
+               zero frequency is at the center.
+               - frequency_vals (numpy.ndarray): Frequency points corresponding to the FFT.
+               - frequency_series (numpy.ndarray): Complex Fourier coefficients.
     """
-    return r + 2. * M * math.log( r / (2. * M) - 1.)
+    deltaT = np.diff(time_vals)[0]
+    assert np.allclose(np.diff(time_vals), deltaT), "Time values must be uniformly spaced."
 
-#Convert modified psi4 to strain
-def psi4ToStrain(mp_psi4, f0):
+    frequency_series = np.fft.fft(time_series, norm="ortho")
+    frequency_vals = np.fft.fftfreq(len(frequency_series), d=deltaT)
+
+    # center the two arrays, such that f=0 at the center of the array
+    n = len(frequency_series)//2
+    frequency_series_rolled = np.roll(frequency_series, n)
+    frequency_vals_rolled = np.roll(frequency_vals, n)
+
+    return frequency_vals_rolled, frequency_series_rolled
+
+
+def get_inverse_Fourier_Transform(frequency_vals, frequency_series, t0=0.0):
     """
-    Convert the input mp_psi4 data to the strain of the gravitational wave
+    Compute the inverse Fourier Transform to return to the time domain.
 
-    mp_psi4 = Weyl scalar result from simulation
-    f0 = cutoff frequency
-    return = strain (h) of the gravitational wave
+    Args:
+        frequency_vals (array-like): Array of frequency points, must be uniformly spaced.
+        frequency_series (array-like): Frequency series of which you want to compute IFFT.
+        t0 (float, optional): Starting time value for the returned time series. Defaults to 0.0.
+
+    Returns:
+        tuple: (time_vals, time_series) arrays.
+               - time_vals (numpy.ndarray): Time points corresponding to the inverse FFT.
+               - time_series (numpy.ndarray): Reconstructed time-domain signal (complex).
     """
-    #TODO: Check for uniform spacing in time
-    t0 = mp_psi4[:, 0]
-    list_len = len(t0)
-    complexPsi = mp_psi4[:, 1]+1.j*mp_psi4[:, 2]
+    deltaF = np.diff(frequency_vals)[0]
+    assert np.allclose(np.diff(frequency_vals), deltaF), "Frequency values must be uniformly spaced."
 
-    freq, psif = myFourierTransform(t0, complexPsi)
-    dhf = ffi(freq, psif, f0)
-    hf = ffi(freq, dhf, f0)
+    # return to original numpy's packaging of frequency series
+    n = len(frequency_series)//2
+    frequency_series_unrolled = np.roll(frequency_series, -n)
 
-    time, h = myFourierTransformInverse(freq, hf, t0[0])
+    time_series = np.fft.ifft(frequency_series_unrolled, norm="ortho")
+
+    time_vals = t0 + np.arange(len(time_series)) * 1 / (len(frequency_series_unrolled) * deltaF)
+    return time_vals, time_series
+
+def integrate_using_fixed_frequency_integration(frequency_vals, complex_psi4f, cutoff_frequency, suppress_lowf_factor=1.0):
+    """
+    Integrate a complex frequency-domain signal using Fixed-Frequency Integration (FFI).
+
+    This method divides the Fourier-domain signal by (i*omega) while suppressing 
+    contributions below a cutoff frequency to avoid low-frequency divergences.
+
+    Args:
+        frequency_vals (array-like): Frequencies corresponding to the input Fourier signal.
+        complex_psi4f (array-like): Complex frequency-domain signal (e.g., Fourier transform of ψ₄).
+        cutoff_frequency (float): Low-frequency cutoff for the integration, in radians/sec.
+        suppress_lowf_factor (float, optional): Factor to suppress low-frequency components. Defaults to 1.0.
+
+    Returns:
+        numpy.ndarray: Complex frequency-domain signal after integration.
+    """
+    f1 = cutoff_frequency/(2*math.pi)
+
+    # create masks
+    mask1 = (np.sign((frequency_vals/f1) - 1) + 1)/2.
+    mask2 = (np.sign((-frequency_vals/f1) - 1) + 1)/2.
+    mask = 1 - (1 - mask1) * (1 - mask2)
+    frequency_vals_new = mask * frequency_vals + (1-mask) * f1 * suppress_lowf_factor * np.sign(frequency_vals - np.finfo(float).eps)
+
+    FFI_output = complex_psi4f/(2*math.pi*1.j*frequency_vals_new)
+    return FFI_output
+
+def convert_psi4_to_strain(psi4_table, cutoff_frequency, suppress_lowf_factor=1.0):
+    """
+    Convert a time-domain ψ₄ waveform to gravitational-wave strain h using double integration in Fourier space.
+
+    This function uses the Fixed-Frequency Integration (FFI) method twice to integrate ψ₄
+    to obtain h, while suppressing low-frequency artifacts.
+
+    Args:
+        psi4_table (numpy.ndarray): Nx3 array with columns [time, psi4_real, psi4_imag].
+        cutoff_frequency (float): Low-frequency cutoff for the FFI integration, in radians/sec.
+        suppress_lowf_factor (float, optional): Factor to suppress low-frequency contributions. Defaults to 1.0.
+
+    Returns:
+        numpy.ndarray: Nx2 array with columns [time, h], where h is the complex strain (h_+ - i h_×).
+    """
+    time = psi4_table[:, 0]
+    complexPsi = psi4_table[:, 1]+1.j*psi4_table[:, 2] # NR convention
+
+    frequency_vals, psi4f = get_Fourier_Transform(time, complexPsi)
+    dhf = integrate_using_fixed_frequency_integration(frequency_vals, psi4f, cutoff_frequency, suppress_lowf_factor)
+    hf = integrate_using_fixed_frequency_integration(frequency_vals, dhf, cutoff_frequency, suppress_lowf_factor)
+
+    time, h = get_inverse_Fourier_Transform(frequency_vals, hf, time[0])
     hTable = np.column_stack((time, h))
     return hTable
 
-#Fixed frequency integration
-# See https://arxiv.org/abs/1508.07250 for method
-def ffi(freq, data, f0):
+def get_cleaned_psi4(psi4_table, remove_upto=75, zero_pad=True):
     """
-    Integrates the data according to the input frequency and cutoff frequency
+    Clean and preprocess a ψ₄ time series by removing initial junk radiation and resizing the array.
 
-    freq = fourier transform frequency
-    data = input on which ffi is performed
-    f0 = cutoff frequency
+    The function can optionally zero-pad the array to the nearest power of two to facilitate FFTs.
+
+    Args:
+        psi4_table (numpy.ndarray): Nx3 array with columns [time, psi4_real, psi4_imag].
+        remove_upto (float, optional): Time value up to which the data is considered junk and removed. Defaults to 75.
+        zero_pad (bool, optional): Whether to zero-pad the array to the next power of two. Defaults to True.
+
+    Returns:
+        numpy.ndarray: Preprocessed Nx3 array with time, psi4_real, and psi4_imag. 
+                       The initial junk portion is zeroed out, and the array may be zero-padded.
     """
-    f1 = f0/(2*math.pi)
-    fs = freq
-    gs = data
-    mask1 = (np.sign((fs/f1) - 1) + 1)/2.
-    mask2 = (np.sign((-fs/f1) - 1) + 1)/2.
-    mask = 1 - (1 - mask1) * (1 - mask2)
-    fs2 = mask * fs + (1-mask) * f1 * np.sign(fs - np.finfo(float).eps)
-    new_gs = gs/(2*math.pi*1.j*fs2)
-    return new_gs
+    # what all do I want to do?
+    # 1) Remove junk radiation: Time after subtracting RadialToTortoise(radius, ADMMass) should have junk radiation at 0. Removing upto 50
+    # 2) Resize to power 2
+    len_original = len(psi4_table[:,0])
+    if zero_pad:
+        nearest_power_2 = int(2**(np.ceil(np.log2(len_original))))
+    else:
+        nearest_power_2 = len_original
+    t0, deltaT = psi4_table[0,0], np.diff(psi4_table[:,0])[1]
+    print(f'Resizing from {len_original} to {nearest_power_2}')
+    psi4_data_new = np.zeros((nearest_power_2, 3))
 
-#Fourier Transform
-def myFourierTransform(t0, complexPsi):
+    index_at_remove_upto = np.argmin(np.abs(psi4_table[:,0]-remove_upto))
+    print(f'Removing content upto = {psi4_table[index_at_remove_upto, 0]}')
+    psi4_data_new[:, 0] = np.arange(nearest_power_2) * deltaT + t0
+    psi4_data_new[index_at_remove_upto:len_original, 1] = psi4_table[index_at_remove_upto:len_original,1]
+    psi4_data_new[index_at_remove_upto:len_original, 2] = psi4_table[index_at_remove_upto:len_original,2]
+    return psi4_data_new
+
+###########################################################################################
+# Power method functions
+###########################################################################################
+
+def convert_radial_to_tortoise(r, M):
     """
-    Transforms the complexPsi data to frequency space
+    Convert a radial coordinate to the tortoise coordinate.
 
-    t0 = time data points
-    complexPsi = data points of Psi to be transformed
+    The tortoise coordinate accounts for the effect of the black hole mass
+    in "stretching" the radial coordinate near the horizon.
+
+    Args:
+        r (float): Radial coordinate.
+        M (float): ADM mass of the black hole.
+
+    Returns:
+        float: Tortoise coordinate corresponding to the input radial coordinate.
     """
-    psif = np.fft.fft(complexPsi, norm="ortho")
-    l = len(complexPsi)
-    n = int(math.floor(l/2.))
-    newpsif = psif[l-n:]
-    newpsif = np.append(newpsif, psif[:l-n])
-    T = np.amin(np.diff(t0))*l
-    freq = range(-n, l-n)/T
-    return freq, newpsif
+    return r + 2. * M * math.log( r / (2. * M) - 1.)
 
-#Inverse Fourier Transform
-def myFourierTransformInverse(freq, hf, t0):
-    l = len(hf)
-    n = int(math.floor(l/2.))
-    newhf = hf[n:]
-    newhf = np.append(newhf, hf[:n])
-    amp = np.fft.ifft(newhf, norm="ortho")
-    df = np.amin(np.diff(freq))
-    time = t0 + range(0, l)/(df*l)
-    return time, amp
-
-
-def getADMMassFromTwoPunctureBBH(config):
+def get_ADMMass_From_TwoPunctureBBH(TwoPunc_dict):
     """
-    Determine cutoff frequency of simulation
+    Extract the initial ADM mass of the system from a TwoPunctures.bbh metadata dictionary.
 
-    meta_filename = path to TwoPunctures.bbh
-    return = initial ADM mass of system
+    Args:
+        TwoPunc_dict (dict): Dictionary containing metadata parsed from a
+            `TwoPunctures.bbh` file.
+
+    Returns:
+        float: Initial ADM mass of the binary system.
     """
 
-    ADMmass = float(config['metadata']['initial-adm-energy'])
+    ADMmass = float(TwoPunc_dict['metadata']['initial-adm-energy'])
 
     return ADMmass
 
@@ -115,11 +200,11 @@ def angular_momentum(x, q, m, chi1, chi2, LInitNR):
     DeltaM = m1 - m2
     mu = eta
     nu = eta
-    GammaE = 0.5772156649;
+    GammaE = 0.5772156649
     e4 = -(123671./5760.)+(9037.* math.pi**2.)/1536.+(896.*GammaE)/15.+(-(498449./3456.)+(3157.*math.pi**2.)/576.)*nu+(301. * nu**2.)/1728.+(77.*nu**3.)/31104.+(1792. *math.log(2.))/15.
     e5 = -55.13
     j4 = -(5./7.)*e4+64./35.
-    j5 = -(2./3.)*e5-4988./945.-656./135. * eta;
+    j5 = -(2./3.)*e5-4988./945.-656./135. * eta
     CapitalDelta = (1.-4.*eta)**0.5
 
     # Eq 4.7 here https://arxiv.org/pdf/1212.5520.pdf Bohe et al.
@@ -155,34 +240,39 @@ def angular_momentum(x, q, m, chi1, chi2, LInitNR):
         * x**3.))
     return l - LInitNR
 
-def getCutoffFrequencyFromTwoPuncturesBBH(config):
+def get_Cutoff_Frequency_From_TwoPuncturesBBH(TwoPunc_dict):
     """
-    Determine cutoff frequency of simulation
+    Estimate the cutoff frequency for fixed frequency integration from a TwoPunctures.bbh metadata dictionary.
 
-    meta_filename = path to TwoPunctures.bbh
-    return = cutoff frequency
+    Args:
+        TwoPunc_dict (dict): Dictionary containing metadata parsed from a
+            `TwoPunctures.bbh` file. Must include keys for initial black hole
+            positions, momenta, spins, and puncture ADM masses.
+
+    Returns:
+        float: Estimated cutoff GW frequency of the simulation.
     """
 
-    position1x = float(config['metadata']['initial-bh-position1x'])
-    position1y = float(config['metadata']['initial-bh-position1y'])
-    position1z = float(config['metadata']['initial-bh-position1z'])
-    position2x = float(config['metadata']['initial-bh-position2x'])
-    position2y = float(config['metadata']['initial-bh-position2y'])
-    position2z = float(config['metadata']['initial-bh-position2z'])
-    momentum1x = float(config['metadata']['initial-bh-momentum1x'])
-    momentum1y = float(config['metadata']['initial-bh-momentum1y'])
-    momentum1z = float(config['metadata']['initial-bh-momentum1z'])
-    momentum2x = float(config['metadata']['initial-bh-momentum2x'])
-    momentum2y = float(config['metadata']['initial-bh-momentum2y'])
-    momentum2z = float(config['metadata']['initial-bh-momentum2z'])
-    spin1x = float(config['metadata']['initial-bh-spin1x'])
-    spin1y = float(config['metadata']['initial-bh-spin1y'])
-    spin1z = float(config['metadata']['initial-bh-spin1z'])
-    spin2x = float(config['metadata']['initial-bh-spin2x'])
-    spin2y = float(config['metadata']['initial-bh-spin2y'])
-    spin2z = float(config['metadata']['initial-bh-spin2z'])
-    mass1 = float(config['metadata']['initial-bh-puncture-adm-mass1'])
-    mass2 = float(config['metadata']['initial-bh-puncture-adm-mass2'])
+    position1x = float(TwoPunc_dict['metadata']['initial-bh-position1x'])
+    position1y = float(TwoPunc_dict['metadata']['initial-bh-position1y'])
+    position1z = float(TwoPunc_dict['metadata']['initial-bh-position1z'])
+    position2x = float(TwoPunc_dict['metadata']['initial-bh-position2x'])
+    position2y = float(TwoPunc_dict['metadata']['initial-bh-position2y'])
+    position2z = float(TwoPunc_dict['metadata']['initial-bh-position2z'])
+    momentum1x = float(TwoPunc_dict['metadata']['initial-bh-momentum1x'])
+    momentum1y = float(TwoPunc_dict['metadata']['initial-bh-momentum1y'])
+    momentum1z = float(TwoPunc_dict['metadata']['initial-bh-momentum1z'])
+    momentum2x = float(TwoPunc_dict['metadata']['initial-bh-momentum2x'])
+    momentum2y = float(TwoPunc_dict['metadata']['initial-bh-momentum2y'])
+    momentum2z = float(TwoPunc_dict['metadata']['initial-bh-momentum2z'])
+    spin1x = float(TwoPunc_dict['metadata']['initial-bh-spin1x'])
+    spin1y = float(TwoPunc_dict['metadata']['initial-bh-spin1y'])
+    spin1z = float(TwoPunc_dict['metadata']['initial-bh-spin1z'])
+    spin2x = float(TwoPunc_dict['metadata']['initial-bh-spin2x'])
+    spin2y = float(TwoPunc_dict['metadata']['initial-bh-spin2y'])
+    spin2z = float(TwoPunc_dict['metadata']['initial-bh-spin2z'])
+    mass1 = float(TwoPunc_dict['metadata']['initial-bh-puncture-adm-mass1'])
+    mass2 = float(TwoPunc_dict['metadata']['initial-bh-puncture-adm-mass2'])
 
     angularmomentum1x = position1y * momentum1z - position1z * momentum1y
     angularmomentum1y = position1z * momentum1x - position1x * momentum1z
@@ -210,14 +300,39 @@ def getCutoffFrequencyFromTwoPuncturesBBH(config):
     omGWPN = 2. * omOrbPN
     omCutoff = 0.75 * omGWPN
     return omCutoff
-def extrapolate_using_power_method(radiation_bundle):
 
+
+def extrapolate_using_power_method(radiation_bundle):
+    """
+    Extrapolate gravitational-wave strain to infinity using the power-law method.
+
+    This function takes a `RadiationBundle` containing ψ₄ data at multiple 
+    extraction radii and computes the strain (h_+, h_×) at infinity by 
+    performing the following steps for each included mode:
+        1. Convert ψ₄ at each radius to strain using Fixed-Frequency Integration.
+        2. Multiply ψ₄ by the extraction radius and shift time to the 
+           corresponding tortoise coordinate.
+        3. Compute the amplitude and phase of the strain.
+        4. Interpolate amplitude and phase onto a common, uniform time grid.
+        5. Align phases across different radii to remove 2π jumps.
+        6. Fit amplitude and phase as a function of 1/radius and extrapolate 
+           to infinity using polynomial fits.
+
+    Args:
+        radiation_bundle (RadiationBundle): Object containing ψ₄ data, 
+            extraction radii, included modes, and related metadata.
+
+    Returns:
+        RadiationSphere: Object containing extrapolated complex strain 
+        modes at infinity. Each mode is stored as a `RadiationMode` with 
+        `strain_plus` (h_+) and `strain_cross` (h_×) arrays, along with 
+        time and extrapolation metadata.
+    """
     print(f'Using power method to extrapolate to infinity using radii: {radiation_bundle.radii_list_for_power_method}')
-    f0 = getCutoffFrequencyFromTwoPuncturesBBH(radiation_bundle.TwoPunctures_content)
-    ADMMass = getADMMassFromTwoPunctureBBH(radiation_bundle.TwoPunctures_content)
+    f0 = get_Cutoff_Frequency_From_TwoPuncturesBBH(radiation_bundle.TwoPunctures_content)
+    ADMMass = get_ADMMass_From_TwoPunctureBBH(radiation_bundle.TwoPunctures_content)
     modes = radiation_bundle.included_modes
     radii = radiation_bundle.radii_list_for_power_method
-    print(f0, ADMMass)
 
     # collect amplitude and phase
     extrapolated_strains = {}
@@ -226,36 +341,20 @@ def extrapolate_using_power_method(radiation_bundle):
         strain = []
         phase = []
         amp = []
+        # collect strain amplitde and phase from psi4
         for i in range(len(radii)):
             
             radius = radii[i]
             time, real_part, imag_part = radiation_bundle.get_time(radius)[:, None], radiation_bundle.get_psi4_real_for_mode(el, em, radius)[:, None], radiation_bundle.get_psi4_imaginary_for_mode(el, em, radius)[:, None]
             mp_psi4 = np.hstack([time, real_part, imag_part])
-    #         if padding > 0.:
-    #             # construct a dataset of times after the end of the simulation
-    #             # with all values being zero
-    #             dt = mp_psi4[1,0] - mp_psi4[0,0]
-    #             diff_dt = np.abs(np.diff(mp_psi4[:,0]) - dt)
-    #             if(np.amax(diff_dt / dt) > 1e-4): # timestep not constant to 1e-4
-    #                 raise ValueError("Time step not constant")
-    #             zeros = np.zeros_like(mp_psi4, shape=(int(np.ceil(padding/dt)), mp_psi4.shape[1]))
-    #             times = mp_psi4[-1,0] + np.arange(1, 1+zeros.shape[0], 1)*dt
-    #             zeros[:,0] = times
-    #             mp_psi4 = np.concatenate((mp_psi4, zeros))
-
             mp_psi4_vars.append(mp_psi4)
 
-            mp_psi4_vars[i][:, 0] -= RadialToTortoise(radius, ADMMass)
+            mp_psi4_vars[i][:, 0] -= convert_radial_to_tortoise(radius, ADMMass)
             mp_psi4_vars[i][:, 1] *= radii[i]
             mp_psi4_vars[i][:, 2] *= radii[i]
 
-    #         #Fixed-frequency integration twice to get strain
-    #         #-----------------------------------------------------------------
-    #         # Strain Conversion
-    #         #-----------------------------------------------------------------
-
-            hTable = psi4ToStrain(mp_psi4_vars[i], f0)  # table of strain
-
+            # Get strain
+            hTable = convert_psi4_to_strain(mp_psi4_vars[i], f0)  # table of strain
             time = hTable[:, 0].real
             h = hTable[:, 1]
             hplus = h.real
@@ -263,24 +362,15 @@ def extrapolate_using_power_method(radiation_bundle):
             newhTable = np.column_stack((time, hplus, hcross))
             strain.append(newhTable)
 
-            #-------------------------------------------------------------------
-            # Analysis of Strain
-            #-------------------------------------------------------------------
             #Get phase and amplitude of strain
             h_phase = np.unwrap(np.angle(h))
-            # print(len(h_phase), "h_phase length")
-            # print(len(time), "time length")
-            angleTable = np.column_stack((time, h_phase))     ### start here
-            phase.append(angleTable)                          ### time here
+            angleTable = np.column_stack((time, h_phase))     
+            phase.append(angleTable)                          
             h_amp = np.absolute(h)
             ampTable = np.column_stack((time, h_amp))
             amp.append(ampTable)
 
-        #----------------------------------------------------------------------
-        # Extrapolation
-        #----------------------------------------------------------------------
-
-        # get common range in times
+        # interpolate phase and amplitude to same time grid
         tmin = max([phase[i][ 0,0] for i in range(len(phase))])
         tmax = min([phase[i][-1,0] for i in range(len(phase))])
 
@@ -303,9 +393,6 @@ def extrapolate_using_power_method(radiation_bundle):
             # alignment is between neighbhours just in case there actually ever is
             # >2pi difference between the innermost and the ohtermost detector
             if(i > 0):
-                # for some modes (post 2,2) the initial junk can be the
-                # largest amplitude contribution, so w try to skip it
-                # when looking for maxima
                 junk_time = 50
                 post_junk_idx_p = amp[i-1][:,0] > junk_time
                 post_junk_idx = amp[i][:,0] > junk_time
@@ -317,7 +404,7 @@ def extrapolate_using_power_method(radiation_bundle):
                 resampled_phase_vals -= phase_shift
             phase[i] = np.column_stack((t, resampled_phase_vals))
 
-        #Extrapolate
+        # Extrapolate
         phase_extrapolation_order = 1
         amp_extrapolation_order = 2
         radii = np.asarray(radii, dtype=float)
@@ -335,8 +422,5 @@ def extrapolate_using_power_method(radiation_bundle):
         radially_extrapolated_h_plus = radially_extrapolated_amp * np.cos(radially_extrapolated_phase)
         radially_extrapolated_h_cross = radially_extrapolated_amp * np.sin(radially_extrapolated_phase)
 
-        #extrapolated_strains[el,em] = np.column_stack((t, radially_extrapolated_h_plus, radially_extrapolated_h_cross))
-        extrapolated_strains[(el, em)] = RadiationMode(psi4_real=None, psi4_imaginary=None, l=el, m=em,
-                             rad=0.0, time=t, extrapolated=True, strain_plus=radially_extrapolated_h_plus, strain_cross=radially_extrapolated_h_cross)
-    return RadiationSphere(mode_dict=extrapolated_strains, time=t, radius=0.0,
-                                              extrapolated=True)
+        extrapolated_strains[(el, em)] = RadiationMode(psi4_real=None, psi4_imaginary=None, l=el, m=em, rad=0.0, time=t, extrapolated=True, strain_plus=radially_extrapolated_h_plus, strain_cross=radially_extrapolated_h_cross)
+    return RadiationSphere(mode_dict=extrapolated_strains, time=t, radius=0.0, extrapolated=True)
