@@ -28,9 +28,11 @@ def get_Fourier_Transform(time_vals, time_series):
     frequency_vals = np.fft.fftfreq(len(frequency_series), d=deltaT)
 
     # center the two arrays, such that f=0 at the center of the array
-    n = len(frequency_series)//2
-    frequency_series_rolled = np.roll(frequency_series, n)
-    frequency_vals_rolled = np.roll(frequency_vals, n)
+    # n = len(frequency_series)//2
+    # frequency_series_rolled = np.roll(frequency_series, n)
+    # frequency_vals_rolled = np.roll(frequency_vals, n)
+    frequency_series_rolled = np.fft.fftshift(frequency_series)
+    frequency_vals_rolled = np.fft.fftshift(frequency_vals)
 
     return frequency_vals_rolled, frequency_series_rolled
 
@@ -53,13 +55,42 @@ def get_inverse_Fourier_Transform(frequency_vals, frequency_series, t0=0.0):
     assert np.allclose(np.diff(frequency_vals), deltaF), "Frequency values must be uniformly spaced."
 
     # return to original numpy's packaging of frequency series
-    n = len(frequency_series)//2
-    frequency_series_unrolled = np.roll(frequency_series, -n)
+    # n = len(frequency_series)//2
+    # frequency_series_unrolled = np.roll(frequency_series, -n)
+    frequency_series_unrolled = np.fft.ifftshift(frequency_series)
 
     time_series = np.fft.ifft(frequency_series_unrolled, norm="ortho")
 
     time_vals = t0 + np.arange(len(time_series)) * 1 / (len(frequency_series_unrolled) * deltaF)
     return time_vals, time_series
+
+# def get_Fourier_Transform(t0, complexPsi):
+#     """
+#     Transforms the complexPsi data to frequency space
+
+#     t0 = time data points
+#     complexPsi = data points of Psi to be transformed
+#     """
+#     psif = np.fft.fft(complexPsi, norm="ortho")
+#     l = len(complexPsi)
+#     n = int(math.floor(l/2.))
+#     newpsif = psif[l-n:]
+#     newpsif = np.append(newpsif, psif[:l-n])
+#     T = np.amin(np.diff(t0))*l
+#     freq = range(-n, l-n)/T
+#     return freq, newpsif
+
+# #Inverse Fourier Transform
+# def get_inverse_Fourier_Transform(freq, hf, t0):
+#     l = len(hf)
+#     n = int(math.floor(l/2.))
+#     newhf = hf[n:]
+#     newhf = np.append(newhf, hf[:n])
+#     amp = np.fft.ifft(newhf, norm="ortho")
+#     df = np.amin(np.diff(freq))
+#     time = t0 + range(0, l)/(df*l)
+#     return time, amp
+
 
 def integrate_using_fixed_frequency_integration(frequency_vals, complex_psi4f, cutoff_frequency, suppress_lowf_factor=1.0):
     """
