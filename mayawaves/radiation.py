@@ -116,22 +116,28 @@ class RadiationBundle:
     def use_extrapolation_method(self, extrapolation_metod: str):
         """Set the extrapolation method to use. Choices are 'perturbative' and 'power' . """
         allowed_methods = ['perturbative', 'power']
+        # to trigger new extrapolation if the method is change
+        if self.__use_extrapolation_method != extrapolation_metod:
+            self.__extrapolated_sphere = None
         if extrapolation_metod not in allowed_methods:
             warnings.warn(f"Use one of these methods: {allowed_methods}, defaulting to 'perturbative'")
             self.__use_extrapolation_method = 'perturbative'
         else:
             self.__use_extrapolation_method = extrapolation_metod
+        
 
     @property
-    def radii_list_for_power_method(self):
+    def radii_list_for_power_method(self) -> list:
         """The radii list to use to extrapolate to infinity if using power method. By default uses all."""
         if self.__radii_list_for_power_method is None:
             self.__radii_list_for_power_method = sorted(list(self.radiation_spheres.keys()))
         return self.__radii_list_for_power_method
     
     @radii_list_for_power_method.setter
-    def radii_list_for_power_method(self, radii_list: list | np.ndarray):
+    def radii_list_for_power_method(self, radii_list: list):
         """Set the radii list to use to extrapolate to infinity if using power method."""
+        if self.__radii_list_for_power_method != radii_list:
+            self.__extrapolated_sphere = None
         self.__radii_list_for_power_method = radii_list
     
     @property
@@ -144,6 +150,8 @@ class RadiationBundle:
     @order_for_perturbative_method.setter
     def order_for_perturbative_method(self, order: int):
         """Set the order to use for perturbative method."""
+        if self.__order_for_perturbative_method != order:
+            self.__extrapolated_sphere = None
         self.__order_for_perturbative_method = order
 
     @property
@@ -661,12 +669,14 @@ class RadiationBundle:
 
         """
         if self.use_extrapolation_method == 'power':
+            print(f"Using method '{self.use_extrapolation_method}' with radii list = {self.radii_list_for_power_method}")
             from mayawaves.utils.extrapolationutils import extrapolate_using_power_method
             extrap_sphere= extrapolate_using_power_method(self)
             if extrap_sphere is None:
                 return
             self.__extrapolated_sphere = extrap_sphere
         elif self.use_extrapolation_method == 'perturbative':
+            print(f"Using method '{self.use_extrapolation_method}' with radius {self.radius_for_extrapolation} M and order {self.order_for_perturbative_method} ")
             radiation_sphere = self.radiation_spheres[self.radius_for_extrapolation]
             extrap_sphere = radiation_sphere.get_extrapolated_sphere(order=self.order_for_perturbative_method)
             if extrap_sphere is None:
@@ -1887,6 +1897,7 @@ class RadiationMode:
             infinite radius.
 
         """
+        print(f'Using perturbative method to extrapolate to infinity')
         if self.extrapolated:
             return self
 
