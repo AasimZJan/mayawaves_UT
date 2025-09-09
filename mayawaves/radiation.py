@@ -57,10 +57,14 @@ class RadiationBundle:
         if len(radiation_spheres) == 0:
             warnings.warn('There is no data to create a radiation sphere and therefore a radiation bundle from.')
             return None
-        TwoPunctures_content_raw = TwoPunctures_content['content'][()].decode('utf-8')
-        config = configparser.ConfigParser()
-        config.read_string(TwoPunctures_content_raw)
-        config_dict = {s: dict(config[s]) for s in config.sections()}
+        if TwoPunctures_content is not None:
+            TwoPunctures_content_raw = TwoPunctures_content['content'][()].decode('utf-8')
+            config = configparser.ConfigParser()
+            config.read_string(TwoPunctures_content_raw)
+            config_dict = {s: dict(config[s]) for s in config.sections()}
+        else:
+            config_dict = None
+        
         return RadiationBundle(radiation_spheres=radiation_spheres, TwoPunctures_content_dict = config_dict)
 
     @property
@@ -104,7 +108,10 @@ class RadiationBundle:
     def TwoPunctures_content(self):
         """Contents of TwoPunctures in the form of a dictionary."""
         return self.__TwoPunctures_content
-    
+    @TwoPunctures_content.setter
+    def TwoPunctures_content(self, TwoPunctures_content):
+        """Contents of TwoPunctures in the form of a dictionary."""
+        self.__TwoPunctures_content = TwoPunctures_content
     @property
     def use_extrapolation_method(self):
         """The method to use for extrapolating data to infinite radius. If not set explicitly, defaults to 'perturbative'."""
