@@ -51,8 +51,13 @@ class Coalescence:
         if len(self.__compact_objects) > 2:
             self.__final_compact_object_index = 2
 
+        
         if 'radiative' in self.__h5_file:
-            self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"], self.__h5_file['TwoPunctures'])
+            if 'TwoPunctures' in self.__h5_file:
+                self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"], self.__h5_file['TwoPunctures'])
+            else:
+                self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"], None)
+             
 
     @property
     def name(self) -> str:

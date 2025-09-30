@@ -360,11 +360,17 @@ def extrapolate_using_power_method(radiation_bundle):
         time and extrapolation metadata.
     """
     print(f'Using power method to extrapolate to infinity using radii: {radiation_bundle.radii_list_for_power_method}')
-    f0 = get_Cutoff_Frequency_From_TwoPuncturesBBH(radiation_bundle.TwoPunctures_content)
-    ADMMass = get_ADMMass_From_TwoPunctureBBH(radiation_bundle.TwoPunctures_content)
+
     modes = radiation_bundle.included_modes
     radii = radiation_bundle.radii_list_for_power_method
-
+    if radiation_bundle.TwoPunctures_content is not None:
+        f0 = get_Cutoff_Frequency_From_TwoPuncturesBBH(radiation_bundle.TwoPunctures_content)
+        ADMMass = get_ADMMass_From_TwoPunctureBBH(radiation_bundle.TwoPunctures_content)
+        
+    else:
+        print('TwoPunctures content is None, ususing default functions to calculate f0.')
+        f0 = radiation_bundle.radiation_spheres[radii[0]].modes[(2, 2)].omega_start
+        ADMMass = 1
     # collect amplitude and phase
     extrapolated_strains = {}
     for (el,em) in modes:
