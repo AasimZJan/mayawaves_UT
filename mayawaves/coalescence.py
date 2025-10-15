@@ -408,7 +408,7 @@ class Coalescence:
         return self.radiationbundle.radii_list_for_power_method
     
     @radii_list_for_power_method.setter
-    def radii_list_for_power_method(self, radii_list: list | np.ndarray):
+    def radii_list_for_power_method(self, radii_list):
         """Set the radii list to use to extrapolate to infinity if using power method."""
         self.radiationbundle.radii_list_for_power_method = radii_list
     
