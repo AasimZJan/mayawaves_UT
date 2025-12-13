@@ -165,7 +165,7 @@ def get_detector_frame_modes_from_NR_hdf5(waveform_object, lmax=None, modes=None
     mtotal = (waveform_object.m1 + waveform_object.m2)*MSUN
     m1 = data_1.attrs["mass1"] * mtotal 
     m2 = data_1.attrs["mass2"] * mtotal
-    fmin = data_1.attrs["f_lower_at_1MSUN"] * MSUN/mtotal
+    fmin = np.abs(data_1.attrs["f_lower_at_1MSUN"]) * MSUN/mtotal
     if verbose:
         print(f"Smallest possible fmin for this waveform {fmin} Hz. fmin at 1 solar mass is {data_1.attrs['f_lower_at_1MSUN']}")
         a1x, a1y, a1z, a2x, a2y, a2z = lalsim.SimInspiralNRWaveformGetSpinsFromHDF5File(waveform_object.fref, mtotal/lal.MSUN_SI, waveform_object.NR_hdf5_path)
@@ -317,7 +317,7 @@ def resample_psd(psd, df=None):   #this acts weird due to non integer steps size
     new_frequency = np.arange(f0, f_final+5*df, df or deltaF)
     return new_frequency, interp(new_frequency)
     
-def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_mismatch_time_series=False, verbose=True, integral_factor=4):
+def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, psd="H1", flow=20, fhigh=2048, resize="power_2", phase_maximization_trick=False, output_mismatch_time_series=False, verbose=True, integral_factor=2):
     """
     Compute the mismatch between two time-domain waveforms using their FFTs and a detector PSD.
 
@@ -331,7 +331,7 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         phase_maximization_trick (bool): If True, marginalize over phase. Approximation fails if higher order mode content is significant.
         output_mismatch_time_series (bool): If True, return time-dependent mismatch.
         verbose (bool): Verbosity.
-        integral_factor (float, optional): The co-efficient for integral. Should be 2 but the mismatch values are independent of this choice as the factors cancel out.
+        integral_factor (float, optional): The co-efficient for integral. Should be 2 since negative frequencies are included too.
 
     Returns:
         float: Mismatch value.
@@ -348,7 +348,7 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         if verbose:
             print(f"Resizing to {max_len} from len_1 = {len_1}, len_2 = {len_2}")
         wf_tseries_1 = np.zeros(max_len, dtype=complex)
-        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1
+        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1 
 
         wf_tseries_2 = np.zeros(max_len, dtype=complex)
         wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
@@ -357,10 +357,10 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         if verbose:
             print(f"Resizing to {min_len} from len_1 = {len_1}, len_2 = {len_2}")
         wf_tseries_1 = np.zeros(min_len, dtype=complex)
-        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1
+        wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1 
 
         wf_tseries_2 = np.zeros(min_len, dtype=complex)
-        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
+        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2 
     
     elif resize == "power_2":
         if verbose:
@@ -369,7 +369,7 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         wf_tseries_1[:len(waveform_time_series1)] = waveform_time_series1
 
         wf_tseries_2 = np.zeros(power2_len, dtype=complex)
-        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2
+        wf_tseries_2[:len(waveform_time_series2)] = waveform_time_series2 
 
     # FFT
     wf_1_FD_og = np.fft.fft(wf_tseries_1)
@@ -427,14 +427,14 @@ def mismatch(waveform_time_series1, waveform_time_series2, deltaT_1, deltaT_2, p
         print(f"norm-1 = {norm_1}, norm-2 = {norm_2}")
 
     # IP
-    integrand = integral_factor * np.roll((wf_1_FD.conj() * wf_2_FD * weights_two_sided), -n//2)
-    overlap_time_shift = np.fft.ifft(integrand) * (deltaF * n)
-
+    integrand =np.roll((wf_1_FD.conj() * wf_2_FD * weights_two_sided), -n//2)
+    overlap_time_shift =  integral_factor * np.fft.ifft(integrand) * (deltaF * n)
     if phase_maximization_trick:
         overlap_time_series = np.abs(overlap_time_shift)
     else:
         overlap_time_series = np.real(overlap_time_shift)
-    
+    if verbose:
+        print(f'max innerproduct = {np.max(overlap_time_series)}')
     time_max_match = np.max(overlap_time_series)
     if output_mismatch_time_series:
         if verbose:

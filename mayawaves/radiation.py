@@ -7,7 +7,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt
 from scipy.signal.windows import blackmanharris
 import math
-
+import configparser
 
 class Frame(Enum):
     RAW = 1
@@ -17,14 +17,18 @@ class Frame(Enum):
 class RadiationBundle:
     """Class for interacting with all radiative information from the simulation."""
 
-    def __init__(self, radiation_spheres: dict):
+    def __init__(self, radiation_spheres: dict, TwoPunctures_content_dict):
         self.__radiation_spheres = radiation_spheres
         self.__extrapolated_sphere = None
         self.__radius_for_extrapolation = None
+        self.__use_extrapolation_method = None
+        self.__radii_list_for_power_method = None
+        self.__order_for_perturbative_method = None
+        self.__TwoPunctures_content = TwoPunctures_content_dict
         self.__frame = Frame.RAW
 
     @staticmethod
-    def create_radiation_bundle(radiation_group: h5py.Group):
+    def create_radiation_bundle(radiation_group: h5py.Group, TwoPunctures_content:h5py.Group) :
         """Create a RadiationBundle
 
         Args:
@@ -53,7 +57,15 @@ class RadiationBundle:
         if len(radiation_spheres) == 0:
             warnings.warn('There is no data to create a radiation sphere and therefore a radiation bundle from.')
             return None
-        return RadiationBundle(radiation_spheres=radiation_spheres)
+        if TwoPunctures_content is not None:
+            TwoPunctures_content_raw = TwoPunctures_content['content'][()].decode('utf-8')
+            config = configparser.ConfigParser()
+            config.read_string(TwoPunctures_content_raw)
+            config_dict = {s: dict(config[s]) for s in config.sections()}
+        else:
+            config_dict = None
+        
+        return RadiationBundle(radiation_spheres=radiation_spheres, TwoPunctures_content_dict = config_dict)
 
     @property
     def frame(self) -> Frame:
@@ -93,6 +105,63 @@ class RadiationBundle:
         return self.__radiation_spheres
 
     @property
+    def TwoPunctures_content(self):
+        """Contents of TwoPunctures in the form of a dictionary."""
+        return self.__TwoPunctures_content
+    @TwoPunctures_content.setter
+    def TwoPunctures_content(self, TwoPunctures_content):
+        """Contents of TwoPunctures in the form of a dictionary."""
+        self.__TwoPunctures_content = TwoPunctures_content
+    @property
+    def use_extrapolation_method(self):
+        """The method to use for extrapolating data to infinite radius. If not set explicitly, defaults to 'perturbative'."""
+        if self.__use_extrapolation_method is None:
+            self.__use_extrapolation_method = 'perturbative'
+        return self.__use_extrapolation_method
+    
+    @use_extrapolation_method.setter
+    def use_extrapolation_method(self, extrapolation_metod: str):
+        """Set the extrapolation method to use. Choices are 'perturbative' and 'power' . """
+        allowed_methods = ['perturbative', 'power']
+        # to trigger new extrapolation if the method is change
+        if self.__use_extrapolation_method != extrapolation_metod:
+            self.__extrapolated_sphere = None
+        if extrapolation_metod not in allowed_methods:
+            warnings.warn(f"Use one of these methods: {allowed_methods}, defaulting to 'perturbative'")
+            self.__use_extrapolation_method = 'perturbative'
+        else:
+            self.__use_extrapolation_method = extrapolation_metod
+        
+
+    @property
+    def radii_list_for_power_method(self) -> list:
+        """The radii list to use to extrapolate to infinity if using power method. By default uses all."""
+        if self.__radii_list_for_power_method is None:
+            self.__radii_list_for_power_method = sorted(list(self.radiation_spheres.keys()))
+        return self.__radii_list_for_power_method
+    
+    @radii_list_for_power_method.setter
+    def radii_list_for_power_method(self, radii_list: list):
+        """Set the radii list to use to extrapolate to infinity if using power method."""
+        if self.__radii_list_for_power_method != radii_list:
+            self.__extrapolated_sphere = None
+        self.__radii_list_for_power_method = radii_list
+    
+    @property
+    def order_for_perturbative_method(self):
+        """Order to use for perturbative method. By default we use 2."""
+        if self.__order_for_perturbative_method is None:
+            self.__order_for_perturbative_method = 2
+        return self.__order_for_perturbative_method
+    
+    @order_for_perturbative_method.setter
+    def order_for_perturbative_method(self, order: int):
+        """Set the order to use for perturbative method."""
+        if self.__order_for_perturbative_method != order:
+            self.__extrapolated_sphere = None
+        self.__order_for_perturbative_method = order
+
+    @property
     def extrapolated_sphere(self):
         """The RadiationSphere with extrapolated radius. All :math:`\Psi_4` data has been extrapolated to infinite
         radius using the method described in https://arxiv.org/abs/1008.4360 and https://arxiv.org/abs/1108.4421."""
@@ -130,6 +199,9 @@ class RadiationBundle:
         self.__radius_for_extrapolation = radius
         # reset extrapolated sphere so it uses the new radiation radius for extrapolation
         self.__extrapolated_sphere = None
+
+
+
 
     @property
     def l_max(self) -> int:
@@ -603,11 +675,20 @@ class RadiationBundle:
             order (:obj:`int`, optional): the extrapolation order. Defaults to 2.
 
         """
-        radiation_sphere = self.radiation_spheres[self.radius_for_extrapolation]
-        extrap_sphere = radiation_sphere.get_extrapolated_sphere(order=order)
-        if extrap_sphere is None:
-            return
-        self.__extrapolated_sphere = extrap_sphere
+        if self.use_extrapolation_method == 'power':
+            print(f"Using method '{self.use_extrapolation_method}' with radii list = {self.radii_list_for_power_method}")
+            from mayawaves.utils.extrapolationutils import extrapolate_using_power_method
+            extrap_sphere= extrapolate_using_power_method(self)
+            if extrap_sphere is None:
+                return
+            self.__extrapolated_sphere = extrap_sphere
+        elif self.use_extrapolation_method == 'perturbative':
+            print(f"Using method '{self.use_extrapolation_method}' with radius {self.radius_for_extrapolation} M and order {self.order_for_perturbative_method} ")
+            radiation_sphere = self.radiation_spheres[self.radius_for_extrapolation]
+            extrap_sphere = radiation_sphere.get_extrapolated_sphere(order=self.order_for_perturbative_method)
+            if extrap_sphere is None:
+                return
+            self.__extrapolated_sphere = extrap_sphere
 
 
 class RadiationSphere:
@@ -1823,6 +1904,7 @@ class RadiationMode:
             infinite radius.
 
         """
+        print(f'Using perturbative method to extrapolate to infinity')
         if self.extrapolated:
             return self
 
