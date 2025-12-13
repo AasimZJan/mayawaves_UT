@@ -406,7 +406,7 @@ def extrapolate_using_power_method(radiation_bundle):
             h_amp = np.absolute(h)
             ampTable = np.column_stack((time, h_amp))
             amp.append(ampTable)
-
+	# this is problematic 
         # interpolate phase and amplitude to same time grid
         tmin = max([phase[i][ 0,0] for i in range(len(phase))])
         tmax = min([phase[i][-1,0] for i in range(len(phase))])
