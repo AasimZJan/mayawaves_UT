@@ -359,7 +359,7 @@ def extrapolate_using_power_method(radiation_bundle):
         `strain_plus` (h_+) and `strain_cross` (h_×) arrays, along with 
         time and extrapolation metadata.
     """
-    print(f'Using power method to extrapolate to infinity using radii: {radiation_bundle.radii_list_for_power_method}')
+    # print(f'Using power method to extrapolate to infinity using radii: {radiation_bundle.radii_list_for_power_method}')
 
     modes = radiation_bundle.included_modes
     radii = radiation_bundle.radii_list_for_power_method
@@ -368,7 +368,7 @@ def extrapolate_using_power_method(radiation_bundle):
         ADMMass = get_ADMMass_From_TwoPunctureBBH(radiation_bundle.TwoPunctures_content)
         
     else:
-        print('TwoPunctures content is None, ususing default functions to calculate f0.')
+        print('TwoPunctures content is None, using default functions to calculate f0.')
         f0 = radiation_bundle.radiation_spheres[radii[0]].modes[(2, 2)].omega_start
         ADMMass = 1
     # collect amplitude and phase
@@ -406,13 +406,33 @@ def extrapolate_using_power_method(radiation_bundle):
             h_amp = np.absolute(h)
             ampTable = np.column_stack((time, h_amp))
             amp.append(ampTable)
-	# this is problematic 
+            # radius = radii[i]
+            # time, hplus, hcross = radiation_bundle.get_time(radius)[:, None], radiation_bundle.get_strain_plus_for_mode(el, em, radius)[:, None], radiation_bundle.get_strain_cross_for_mode(el, em, radius)[:, None]
+            # mp_strain = np.hstack([time, hplus, hcross]) 
+            # mp_strain[:, 0] -= convert_radial_to_tortoise(radius, ADMMass)
+            # time = mp_strain[:, 0]
+            # h = mp_strain[:, 1] + 1j*mp_strain[:, 2]
+            
+            # hplus = h.real
+            # hcross = h.imag
+            # newhTable = np.column_stack((time, hplus, hcross))
+            # strain.append(newhTable)
+
+            # #Get phase and amplitude of strain
+            # h_phase = np.unwrap(np.angle(h))
+            # angleTable = np.column_stack((time, h_phase))     
+            # phase.append(angleTable)                          
+            # h_amp = np.absolute(h)
+            # ampTable = np.column_stack((time, h_amp))
+            # amp.append(ampTable)
+
+
         # interpolate phase and amplitude to same time grid
         tmin = max([phase[i][ 0,0] for i in range(len(phase))])
         tmax = min([phase[i][-1,0] for i in range(len(phase))])
 
         # smallest timestep in any series
-        dtmin = min([np.amin(np.diff(phase[0][:,0])) for i in range(len(phase))])
+        dtmin = min([np.amin(np.diff(phase[i][:,0])) for i in range(len(phase))])
 
         # uniform, common time
         t = np.arange(tmin, tmax, dtmin)
