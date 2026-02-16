@@ -308,7 +308,7 @@ def extrapolate_using_power_method(radiation_bundle):
         end_window_time = start_window_time + window_length_in_time
         if t[-1] < start_window_time:
             warnings.warn("Not enough time after max to window")
-            continue
+            pass
         else:
             # windowing logic starts
             end_window_time = min(end_window_time, t[-2])
