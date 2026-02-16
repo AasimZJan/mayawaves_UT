@@ -3,7 +3,7 @@ import math
 import scipy.optimize
 import scipy.interpolate
 from mayawaves.radiation import RadiationMode, RadiationSphere
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, sosfiltfilt
 from scipy.signal.windows import blackmanharris
 import warnings
 
@@ -119,7 +119,7 @@ def convert_psi4_to_strain(psi4_table, cutoff_frequency, suppress_lowf_factor=1.
     # information to supress low and high frequency noise in the primary extrapolation function
     amplitude_f = np.abs(hf)
     max_amplitude_f = np.max(amplitude_f)
-    criterion = 10**(-4) # decrease this to increase fmax. The logic supresses frequency content where the amplitude(f) < critertaion*max_amplitude(f)
+    criterion = 10**(-5) # decrease this to increase fmax. The logic supresses frequency content where the amplitude(f) < critertaion*max_amplitude(f)
     indices_criterion = np.argwhere(amplitude_f > max_amplitude_f*criterion).flatten()
     fvals_criterion = frequency_vals[indices_criterion]
     time, h = get_inverse_Fourier_Transform(frequency_vals, hf, time[0])
@@ -177,13 +177,15 @@ def extrapolate_using_power_method(radiation_bundle):
 
     # modes to extrapolate
     modes = radiation_bundle.included_modes
-    assert (2,2) in modes, "(2,2) mode needs to be present."
+
     # for loop needs to start with (2,2) mode
+    assert (2,2) in modes, "(2,2) mode needs to be present."
     modes.remove((2,2))
     modes.insert(0, (2,2))
 
     # radii to use for extrapolation
     radii = radiation_bundle.radii_list_for_power_method
+
     # default values. Do we need to be exact? Information needs to be read from TwoPunctures.bbh
     ADMMass = 1
 
@@ -205,7 +207,7 @@ def extrapolate_using_power_method(radiation_bundle):
             collect_psi4[i][:, 1] *= radii[i]
             collect_psi4[i][:, 2] *= radii[i]
 
-            # set the lower omega cutoff for FFI. Matching mayawaves' approach 
+            # # set the lower omega cutoff for FFI. Matching mayawaves' approach 
             omega_22_start = radiation_bundle.radiation_spheres[radii[i]].modes[(2, 2)].omega_start
             if em == 0:
                 omega_0 = 0.25 * omega_22_start
@@ -230,7 +232,6 @@ def extrapolate_using_power_method(radiation_bundle):
             h_amp = np.absolute(h)
             amp_tmp = np.column_stack((time, h_amp))
             collect_amp.append(amp_tmp)
-
 
         # interpolate phase and amplitude to same time grid
         tmin = max([collect_phase[i][ 0,0] for i in range(len(collect_phase))])
@@ -269,7 +270,7 @@ def extrapolate_using_power_method(radiation_bundle):
 
         # Extrapolate
         phase_extrapolation_order = 1
-        amp_extrapolation_order = 2
+        amp_extrapolation_order = 1  # 2 overfits to noise
         radii = np.asarray(radii, dtype=float)
 
         b_phase = np.empty(dtype=radii.dtype, shape=(len(radii), len(t)))
@@ -287,16 +288,16 @@ def extrapolate_using_power_method(radiation_bundle):
         radially_extrapolated_h_cross = radially_extrapolated_amp * np.sin(radially_extrapolated_phase)
 
         # determine frequencies to surpress 
-        fmin_clean = np.max([fvals_criterion.min(), omega_0/(2*np.pi)]) # for m < 2, the low frequency noise amplitude can be close to the amplitde of the mode itself. This logic helps for such modes.
-        fmax_clean = fvals_criterion.max()        
-        b, a = butter(4, [fmin_clean, fmax_clean], btype='band', fs=1/(np.diff(t)[0]))
+        fmin_clean = omega_0/(2*np.pi) # for m < 2, the low frequency noise amplitude can be close to the amplitde of the mode itself. This logic helps for such modes.
+        fmax_clean = fvals_criterion.max()      
+        
+        # surpress frequency outside the range. sos prevents blowup, which happened atleast in one case.
+        sos = butter(4, [fmin_clean, fmax_clean], btype='band', fs=1/(np.diff(t)[0]), output='sos')
+        strain_plus = sosfiltfilt(sos, radially_extrapolated_h_plus)
+        strain_cross = sosfiltfilt(sos, radially_extrapolated_h_cross)
 
-        # surpress frequency outside the range
-        strain_plus = filtfilt(b, a, radially_extrapolated_h_plus)
-        strain_cross = filtfilt(b, a, radially_extrapolated_h_cross)
-
-        # ---------------------------------------------------------------------
-        # window strain  (INSERTED BLOCK)
+   
+        # window strain 
         window_length_in_time = 30
         start_window_after_max = 120
         

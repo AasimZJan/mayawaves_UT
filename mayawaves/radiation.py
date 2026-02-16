@@ -4,7 +4,7 @@ import h5py
 import numpy as np
 import scipy.integrate
 from scipy.ndimage import uniform_filter1d
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, sosfiltfilt
 from scipy.signal.windows import blackmanharris
 import math
 
@@ -1816,16 +1816,16 @@ class RadiationMode:
         # supress low and high frequency noise
         amplitude_f = np.sqrt(hf_cross**2 + hf_plus**2)
         max_amplitude_f = np.max(amplitude_f)
-        criterion = 10**(-4) # decrease this to increase fmax. The logic supresses frequency content where the amplitude(f) < critertaion*max_amplitude(f)
+        criterion = 10**(-5) # decrease this to increase fmax. The logic supresses frequency content where the amplitude(f) < critertaion*max_amplitude(f)
         indices_criterion = np.argwhere(amplitude_f > max_amplitude_f*criterion).flatten()
         fvals_criterion = np.fft.rfftfreq(len(self.time), d=timestep)[indices_criterion]
 
-        fmin_clean = np.max([fvals_criterion.min(), fmin]) # for m < 2, the low frequency noise amplitude can be close to the amplitde of the mode itself. This logic helps for such modes.
-        fmax_clean = fvals_criterion.max()        
+        fmin_clean = fmin #np.max([fvals_criterion.min(), fmin]) # for m < 2, the low frequency noise amplitude can be close to the amplitde of the mode itself. This logic helps for such modes.
+        fmax_clean = fvals_criterion.max()   
 
-        b, a = butter(4, [fmin_clean, fmax_clean], btype='band', fs=1/(timestep))
-        strain_plus = filtfilt(b, a, strain_plus)
-        strain_cross = filtfilt(b, a, strain_cross)
+        sos = butter(4, [fmin_clean, fmax_clean], btype='band', fs=1/(timestep), output='sos')
+        strain_plus = sosfiltfilt(sos, strain_plus)
+        strain_cross = sosfiltfilt(sos, strain_cross)
 
         if self.time[-1] < start_window_time:
             warnings.warn("Not enough time after max to window")
