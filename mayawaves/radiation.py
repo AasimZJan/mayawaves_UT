@@ -7,7 +7,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import butter, filtfilt
 from scipy.signal.windows import blackmanharris
 import math
-import configparser
+
 
 class Frame(Enum):
     RAW = 1
@@ -17,18 +17,17 @@ class Frame(Enum):
 class RadiationBundle:
     """Class for interacting with all radiative information from the simulation."""
 
-    def __init__(self, radiation_spheres: dict, TwoPunctures_content_dict):
+    def __init__(self, radiation_spheres: dict):
         self.__radiation_spheres = radiation_spheres
         self.__extrapolated_sphere = None
         self.__radius_for_extrapolation = None
         self.__use_extrapolation_method = None
         self.__radii_list_for_power_method = None
         self.__order_for_perturbative_method = None
-        self.__TwoPunctures_content = TwoPunctures_content_dict
         self.__frame = Frame.RAW
 
     @staticmethod
-    def create_radiation_bundle(radiation_group: h5py.Group, TwoPunctures_content:h5py.Group) :
+    def create_radiation_bundle(radiation_group: h5py.Group):
         """Create a RadiationBundle
 
         Args:
@@ -57,15 +56,7 @@ class RadiationBundle:
         if len(radiation_spheres) == 0:
             warnings.warn('There is no data to create a radiation sphere and therefore a radiation bundle from.')
             return None
-        if TwoPunctures_content is not None:
-            TwoPunctures_content_raw = TwoPunctures_content['content'][()].decode('utf-8')
-            config = configparser.ConfigParser()
-            config.read_string(TwoPunctures_content_raw)
-            config_dict = {s: dict(config[s]) for s in config.sections()}
-        else:
-            config_dict = None
-        
-        return RadiationBundle(radiation_spheres=radiation_spheres, TwoPunctures_content_dict = config_dict)
+        return RadiationBundle(radiation_spheres=radiation_spheres)
 
     @property
     def frame(self) -> Frame:
@@ -86,10 +77,6 @@ class RadiationBundle:
             center_of_mass (:obj:`numpy.ndarray`, optional): Time series of center of mass. Only necessary if moving to center of mass corrected frame.
 
         """
-        import sys
-        if sys.version_info.major == 3 and sys.version_info.minor > 10:
-            raise ImportError('Unable to change the radiation frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
         if type(new_frame) != Frame:
             warnings.warn("You must provide the frame as a Frame enum value")
             return
@@ -104,14 +91,6 @@ class RadiationBundle:
         """Dictionary containing all radius -> RadiationSphere pairs"""
         return self.__radiation_spheres
 
-    @property
-    def TwoPunctures_content(self):
-        """Contents of TwoPunctures in the form of a dictionary."""
-        return self.__TwoPunctures_content
-    @TwoPunctures_content.setter
-    def TwoPunctures_content(self, TwoPunctures_content):
-        """Contents of TwoPunctures in the form of a dictionary."""
-        self.__TwoPunctures_content = TwoPunctures_content
     @property
     def use_extrapolation_method(self):
         """The method to use for extrapolating data to infinite radius. If not set explicitly, defaults to 'perturbative'."""
@@ -142,7 +121,14 @@ class RadiationBundle:
     
     @radii_list_for_power_method.setter
     def radii_list_for_power_method(self, radii_list: list):
-        """Set the radii list to use to extrapolate to infinity if using power method."""
+        """Set the list of radii to use when extrapolating to infinite radius with the power method.
+
+        Args:
+            radii_list (list[float] or None): The radii to include in the power-law
+                extrapolation. If None, all available radii are used. Changing
+                this value resets the cached extrapolated sphere.
+
+        """
         if self.__radii_list_for_power_method != radii_list:
             self.__extrapolated_sphere = None
         self.__radii_list_for_power_method = radii_list
@@ -156,7 +142,14 @@ class RadiationBundle:
     
     @order_for_perturbative_method.setter
     def order_for_perturbative_method(self, order: int):
-        """Set the order to use for perturbative method."""
+        """Set the perturbative expansion order to use when extrapolating to infinite radius.
+
+        Args:
+            order (int): The perturbative expansion order. If not set explicitly,
+                the default value is 2. Changing this value resets the cached
+                extrapolated sphere.
+
+        """
         if self.__order_for_perturbative_method != order:
             self.__extrapolated_sphere = None
         self.__order_for_perturbative_method = order
@@ -168,19 +161,18 @@ class RadiationBundle:
         if self.__extrapolated_sphere is None:
             self.create_extrapolated_sphere()
         return self.__extrapolated_sphere
+    
+    @property
+    def extrapolated_sphere(self):
+        """The RadiationSphere with extrapolated radius. All :math:`\Psi_4` data has been extrapolated to infinite
+        radius using the method described in https://arxiv.org/abs/1008.4360 and https://arxiv.org/abs/1108.4421."""
+        if self.__extrapolated_sphere is None:
+            self.create_extrapolated_sphere()
+        return self.__extrapolated_sphere
 
     @property
     def radius_for_extrapolation(self) -> float:
-        """The radius from which extrapolation to infinite radius will be computed."""
-        if self.__radius_for_extrapolation is None:
-            included_radii = self.included_radii
-            # find closest to 75, pick lower over higher if equal
-            difference_from_75 = [abs(radius - 75) for radius in included_radii]
-            self.__radius_for_extrapolation = included_radii[np.argmin(difference_from_75)]
-            warnings.warn(
-                "Using data extrapolated from {radius}M for radius extrapolation. You can set this manually by "
-                "setting radius_for_extrapolation".format(
-                    radius=self.__radius_for_extrapolation))
+        """The radius to be used for extrapolation to infinity."""
         return self.__radius_for_extrapolation
 
     @radius_for_extrapolation.setter
@@ -200,9 +192,6 @@ class RadiationBundle:
         # reset extrapolated sphere so it uses the new radiation radius for extrapolation
         self.__extrapolated_sphere = None
 
-
-
-
     @property
     def l_max(self) -> int:
         """Maximum l mode included."""
@@ -219,7 +208,7 @@ class RadiationBundle:
         """List of all extraction radii included."""
         return sorted(list(self.radiation_spheres.keys()))
 
-    def get_time(self, extraction_radius: float = 0) -> np.ndarray:
+    def get_time(self, extraction_radius: float = None) -> np.ndarray:
         """Time array associated with all radiation timeseries at the given radius.
 
         Args:
@@ -229,7 +218,7 @@ class RadiationBundle:
             numpy.ndarray: array containing the time data for all radiation information at the given radius
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -240,23 +229,23 @@ class RadiationBundle:
         time = self.radiation_spheres[extraction_radius].time
         return time
 
-    def get_psi4_real_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_psi4_real_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Real component of :math:`\Psi_4` for a given mode and extraction radius.
 
-        Returns the real part of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is 0,
+        Returns the real part of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is None,
         the data is extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If 0, the data at
+            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If None or not provided, the data at
                 infinity is provided.
 
         Returns:
             numpy.ndarray: :math:`\Psi_4` real component for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -266,23 +255,23 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_psi4_real_for_mode(l=l, m=m)
 
-    def get_psi4_imaginary_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_psi4_imaginary_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Imaginary component of :math:`\Psi_4` for a given mode and extraction radius.
 
         Returns the imaginary part of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is
-        0, the data is extrapolated to infinite radius.
+        None, the data is extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If 0, the data at
+            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If None or not provided, the data at
                 infinity is provided.
 
         Returns:
             numpy.ndarray: :math:`\Psi_4` imaginary component for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -292,23 +281,23 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_psi4_imaginary_for_mode(l=l, m=m)
 
-    def get_psi4_amplitude_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_psi4_amplitude_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Amplitude of :math:`\Psi_4` for a given mode and extraction radius.
 
-        Returns the amplitude of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is 0,
+        Returns the amplitude of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is None,
         the data is extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If 0, the data at
+            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If None or not provided, the data at
                 infinity is provided.
 
         Returns:
             numpy.ndarray: :math:`\Psi_4` amplitude for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -318,23 +307,23 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_psi4_amplitude_for_mode(l=l, m=m)
 
-    def get_psi4_phase_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_psi4_phase_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Phase of :math:`\Psi_4` for a given mode and extraction radius.
 
-        Returns the phase of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is 0,
+        Returns the phase of :math:`\Psi_4` for a given mode and extraction radius. If the extraction radius is None,
         the data is extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If 0, the data at
+            extraction_radius (:obj:`float`, optional): extraction radius for :math:`\Psi_4` data. If None or not provided, the data at
                 infinity is provided.
 
         Returns:
             numpy.ndarray: :math:`\Psi_4` phase for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -344,11 +333,11 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_psi4_phase_for_mode(l=l, m=m)
 
-    def get_strain_plus_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_strain_plus_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Plus component of :math:`rh` for a given mode and extraction radius.
 
         Returns the plus component of strain for a given mode and extraction radius. The strain is the second time
-        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is 0, the data
+        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is None or not provided, the data
         is extrapolated to infinite radius.
 
         Args:
@@ -361,7 +350,7 @@ class RadiationBundle:
             numpy.ndarray: :math:`rh_+` for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -371,24 +360,24 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_strain_plus_for_mode(l=l, m=m)
 
-    def get_strain_cross_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_strain_cross_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Cross component of :math:`rh` for a given mode and extraction radius.
 
         Returns the cross component of strain for a given mode and extraction radius. The strain is the second time
-        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is 0, the data
+        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is None, the data
         is extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If 0, the data at infinity is
+            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If None or not provided, the data at infinity is
                 provided.
 
         Returns:
             numpy.ndarray: :math:`rh_{\\times}` for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -398,24 +387,24 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_strain_cross_for_mode(l=l, m=m)
 
-    def get_strain_recomposed_at_sky_location(self, theta: float, phi: float, extraction_radius: float = 0) -> tuple:
+    def get_strain_recomposed_at_sky_location(self, theta: float, phi: float, extraction_radius: float = None) -> tuple:
         """Plus and cross components of strain recomposed at a given sky location
 
         The strain is recomposed by summing up the modes using spin weighted spherical harmonics as
         :math:`h(t,\\theta,\phi) = \sum_{\ell,m} {}_{-2}Y_{\ell,m}(\\theta, \phi) h_{ \ell,m}(t)`. If the extraction
-        radius is 0, the data is extrapolated to infinite radius.
+        radius is None, the data is extrapolated to infinite radius.
 
         Args:
             theta (float): :math:`0 \leq \\theta \lt \pi`
             phi (float): :math:`0 \leq \phi \lt 2\pi`
-            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If 0, the data at infinity is
+            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If None or not provided, the data at infinity is
                 provided.
 
         Returns:
             tuple: :math:`rh_{+}` and :math:`rh_{\\times}` recomposed at a given sky location
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -425,24 +414,24 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_strain_recomposed_at_sky_location(theta=theta, phi=phi)
 
-    def get_strain_amplitude_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_strain_amplitude_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Amplitude of :math:`rh` for a given mode and extraction radius.
 
         Returns the amplitude of strain for a given mode and extraction radius. The strain is the second time
-        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is 0, the data
+        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is None, the data
         is extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If 0, the data at infinity is
+            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If None or not provided, the data at infinity is
                 provided.
 
         Returns:
             numpy.ndarray: amplitude of :math:`rh` for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -452,25 +441,25 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_strain_amplitude_for_mode(l=l, m=m)
 
-    def get_strain_phase_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> np.ndarray:
+    def get_strain_phase_for_mode(self, l: int, m: int, extraction_radius: float = None) -> np.ndarray:
         """Phase of :math:`rh` for a given mode and extraction radius.
 
         Returns the phase of strain for a given mode and extraction radius. The strain is the second time
-        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is 0, the data
+        integral of :math:`\Psi_4` computed using fixed-frequency integration. If the extraction radius is None, the data
         is extrapolated to infinite radius.
 
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If 0, the data at infinity is
+            extraction_radius (:obj:`float`, optional): extraction radius for strain data. If None or not provided, the data at infinity is
                 provided.
 
         Returns:
             numpy.ndarray: phase of :math:`rh` for a given mode and extraction radius.
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -480,22 +469,22 @@ class RadiationBundle:
             return None
         return self.radiation_spheres[extraction_radius].get_strain_phase_for_mode(l=l, m=m)
 
-    def get_psi4_max_time_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> int:
+    def get_psi4_max_time_for_mode(self, l: int, m: int, extraction_radius: float = None) -> int:
         """Time of maximum :math:`\Psi_4` amplitude for a given mode and extraction radius.
 
-        The time at which the amplitude of :math:`\Psi_4` reaches its peak. If the extraction radius is 0, the data is
+        The time at which the amplitude of :math:`\Psi_4` reaches its peak. If the extraction radius is None, the data is
         extrapolated to infinite radius.
 
         Args:
             l (int): l value of mode
             m (int): m value of mode
-            extraction_radius (:obj:`float`, optional): radius at which :math:`\Psi_4` was extracted
+            extraction_radius (:obj:`float`, optional): radius at which :math:`\Psi_4` was extracted. If None or not provided, data at infinity is returned
 
         Returns:
             float: time of :math:`\Psi_4` max for given mode and extraction radius
 
         """
-        if extraction_radius == 0:
+        if extraction_radius is None:
             if self.extrapolated_sphere is None:
                 warnings.warn("There is no data extrapolated to infinity for that mode")
                 return None
@@ -682,8 +671,13 @@ class RadiationBundle:
             if extrap_sphere is None:
                 return
             self.__extrapolated_sphere = extrap_sphere
+
         elif self.use_extrapolation_method == 'perturbative':
             print(f"Using method '{self.use_extrapolation_method}' with radius {self.radius_for_extrapolation} M and order {self.order_for_perturbative_method} ")
+
+            if self.radius_for_extrapolation is None:
+                raise ValueError("Unable to create an extrapolated sphere because no radius for extrapolation is set. Please set with Coalescence.radius_for_extrapolation.")
+            warnings.warn("This extrapolation uses the formula given in https://arxiv.org/abs/1008.4360 which may not be accurate for all modes. Use with caution.")
             radiation_sphere = self.radiation_spheres[self.radius_for_extrapolation]
             extrap_sphere = radiation_sphere.get_extrapolated_sphere(order=self.order_for_perturbative_method)
             if extrap_sphere is None:
@@ -768,11 +762,6 @@ class RadiationSphere:
             alpha (:obj:`numpy.ndarray`, optional): Offset for center of mass correction. Only necessary if moving to center of mass corrected frame and not providing the center of mass timeseries.
             beta (:obj:`numpy.ndarray`, optional): Boost for center of mass correction. Only necessary if moving to center of mass corrected frame and not providing the center of mass timeseries.
         """
-        import sys
-        if sys.version_info.major == 3 and sys.version_info.minor > 10:
-            raise ImportError(
-                'Unable to change the radiation frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
         if type(new_frame) != Frame:
             warnings.warn('You must provide the new frame as a Frame enum')
             return
@@ -792,11 +781,6 @@ class RadiationSphere:
         if self.frame == Frame.RAW:
             return self.raw_modes
         if self.frame == Frame.COM_CORRECTED:
-            import sys
-            if sys.version_info.major == 3 and sys.version_info.minor > 10:
-                raise ImportError(
-                    'Unable to return modes in center-of-mass corrected frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
             if self.__com_corrected_modes is None:
                 self.__frame = Frame.RAW
                 self._generate_com_corrected_modes()
@@ -829,11 +813,6 @@ class RadiationSphere:
     def time(self) -> np.ndarray:
         """Time array associated with all timeseries provided by this RadiationSphere."""
         if self.frame == Frame.COM_CORRECTED:
-            import sys
-            if sys.version_info.major == 3 and sys.version_info.minor > 10:
-                raise ImportError(
-                    'Unable to return time in center-of-mass corrected frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
             return self.__com_corrected_time
         return self.__time
 
@@ -1027,7 +1006,7 @@ class RadiationSphere:
             return None
 
         h_t_shape = list(self.modes.values())[0].strain_plus.shape
-        h_t = np.zeros(h_t_shape, dtype=np.complex_)
+        h_t = np.zeros(h_t_shape, dtype=np.complex128)
 
         for mode in self.modes:
             l, m = mode
@@ -1337,11 +1316,6 @@ class RadiationSphere:
         extrapolated_sphere = RadiationSphere(mode_dict=temp_modes, time=np.array(self.__time), radius=self.radius,
                                               extrapolated=True)
         if self.frame != Frame.RAW:
-            import sys
-            if sys.version_info.major == 3 and sys.version_info.minor > 10:
-                raise ImportError(
-                    'Unable to set center-of-mass corrected frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
             extrapolated_sphere.set_frame(self.frame, alpha=self.__alpha, beta=self.__beta)
 
         return extrapolated_sphere
@@ -1354,11 +1328,6 @@ class RadiationSphere:
         Returns: A Scri WaveformModes object
 
         """
-        import sys
-        if sys.version_info.major == 3 and sys.version_info.minor > 10:
-            raise ImportError(
-                'Unable to create scri waveform modes object. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
         from scri import WaveformModes
         from scri import h as scri_h
         from scri import Inertial
@@ -1400,11 +1369,6 @@ class RadiationSphere:
             center_of_mass (np.ndarray): timeseries of center of mass
 
         """
-        import sys
-        if sys.version_info.major == 3 and sys.version_info.minor > 10:
-            raise ImportError(
-                'Unable to convert to center-of-mass corrected frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
         com_time = com_time + self.radius
         t_max = np.max(com_time)
         ti = 0.1 * t_max
@@ -1417,11 +1381,11 @@ class RadiationSphere:
         x0 = np.zeros(3)
         xt0 = np.zeros(3)
         for i in range(3):
-            x0[i] = scipy.integrate.trapz(com_maya_int[:, i], t_com_maya_int) / (tf - ti)
-            xt0[i] = scipy.integrate.trapz(com_maya_int[:, i] * t_com_maya_int, t_com_maya_int) / (tf - ti)
+            x0[i] = scipy.integrate.trapezoid(com_maya_int[:, i], t_com_maya_int) / (tf - ti)
+            xt0[i] = scipy.integrate.trapezoid(com_maya_int[:, i] * t_com_maya_int, t_com_maya_int) / (tf - ti)
 
         # calculate alpha and beta with the Newtonian approach
-        self.__alpha = (4 * (tf ** 2 + tf * ti + ti * 2) * x0 - 6 * (tf + ti) * xt0) / (tf - ti) ** 2
+        self.__alpha = (4 * (tf ** 2 + tf * ti + ti ** 2) * x0 - 6 * (tf + ti) * xt0) / (tf - ti) ** 2
         self.__beta = (12 * xt0 - 6 * (tf + ti) * x0) / (tf - ti) ** 2
 
     def _generate_com_corrected_modes(self):
@@ -1429,11 +1393,6 @@ class RadiationSphere:
 
         Uses scri to perform the transformation. For more information on scri, refer to https://scri.readthedocs.io.
         """
-        import sys
-        if sys.version_info.major == 3 and sys.version_info.minor > 10:
-            raise ImportError(
-                'Unable to return modes in center-of-mass corrected frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
         from spherical_functions import LM_index
 
         scri_waveform_object = self._scri_waveform_modes_object()
@@ -1821,12 +1780,13 @@ class RadiationMode:
         length = len(self.time)
 
         # compute fmin
-        # if self.m_value == 0:
-        #     fmin = 0.25 * omega_22_start / (2 * np.pi)
-        # else:
-        #     fmin = 0.75 * (abs(self.m_value) / 2) * omega_22_start / (2 * np.pi)
+        if self.m_value == 0:
+            fmin = 0.25 * omega_22_start / (2 * np.pi)
+        else:
+            fmin = 0.75*(abs(self.m_value) / 2) * omega_22_start / (2 * np.pi)
+            if self.m_value < 2:
+                fmin = omega_22_start / (2 * np.pi)
 
-        fmin = omega_22_start / (2 * np.pi)
         # psi4f from psi4t
         psi4_f_real = np.fft.rfft(self.psi4_real, length)
         psi4_f_imaginary = np.fft.rfft(self.psi4_imaginary, length)
@@ -1853,12 +1813,27 @@ class RadiationMode:
         start_window_time = max_22_time + start_window_after_max
         end_window_time = start_window_time + window_length_in_time
 
+        # supress low and high frequency noise
+        amplitude_f = np.sqrt(hf_cross**2 + hf_plus**2)
+        max_amplitude_f = np.max(amplitude_f)
+        criterion = 10**(-4) # decrease this to increase fmax. The logic supresses frequency content where the amplitude(f) < critertaion*max_amplitude(f)
+        indices_criterion = np.argwhere(amplitude_f > max_amplitude_f*criterion).flatten()
+        fvals_criterion = np.fft.rfftfreq(len(self.time), d=timestep)[indices_criterion]
+
+        fmin_clean = np.max([fvals_criterion.min(), fmin]) # for m < 2, the low frequency noise amplitude can be close to the amplitde of the mode itself. This logic helps for such modes.
+        fmax_clean = fvals_criterion.max()        
+
+        b, a = butter(4, [fmin_clean, fmax_clean], btype='band', fs=1/(timestep))
+        strain_plus = filtfilt(b, a, strain_plus)
+        strain_cross = filtfilt(b, a, strain_cross)
+
         if self.time[-1] < start_window_time:
             warnings.warn("Not enough time after max to window")
             self.__strain_plus = strain_plus
             self.__strain_cross = strain_cross
             return
 
+        # windowing logic starts
         end_window_time = min(end_window_time, self.time[-2])
 
         start_window_index = np.argmax(self.time > start_window_time)
@@ -1874,6 +1849,7 @@ class RadiationMode:
         blackmanharris_window_symmetric = blackmanharris(2 * window_width)
         blackmanharris_window_half = blackmanharris_window_symmetric[window_width:]
         window[start_window_index:end_window_index] = blackmanharris_window_half
+
 
         # smooth window with low pass filter
         step_size = self.time[1] - self.time[0]
@@ -1905,7 +1881,6 @@ class RadiationMode:
             infinite radius.
 
         """
-        # print(f'Using perturbative method to extrapolate to infinity')
         if self.extrapolated:
             return self
 
