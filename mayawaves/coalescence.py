@@ -7,6 +7,7 @@ from mayawaves.compactobject import CompactObject
 from mayawaves.radiation import RadiationBundle
 from mayawaves.utils import postnewtonianutils as pn
 import pandas as pd
+import re
 
 class Coalescence:
     """Fundamental class for interacting with all data about a simulation of a compact object coalescence."""
@@ -51,13 +52,12 @@ class Coalescence:
         if len(self.__compact_objects) > 2:
             self.__final_compact_object_index = 2
 
-        
         if 'radiative' in self.__h5_file:
-            if 'TwoPunctures' in self.__h5_file:
-                self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"], self.__h5_file['TwoPunctures'])
-            else:
-                self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"], None)
-             
+            self.__radiation_mode_bundle = RadiationBundle.create_radiation_bundle(self.__h5_file["radiative"])
+            try:
+                self._set_default_radius_for_extrapolation()
+            except ValueError:
+                pass
 
     @property
     def name(self) -> str:
@@ -297,11 +297,6 @@ class Coalescence:
         Args:
             center_of_mass_corrected (:obj:`bool`, optional): Whether to correct for center of mass drift. Default False. If false, the frame is set back to the original, raw frame.
         """
-        import sys
-        if sys.version_info.major == 3 and sys.version_info.minor > 10:
-            warnings.warn('Python version too recent to be compatible with Scri package. Unable to change the radiation frame.')
-            raise ImportError('Unable to change the radiation frame. Python version too recent to be compatible with Scri package. If you would like the ability to move to center-of-mass corrected frame, use python <= 3.10.')
-
         from mayawaves.radiation import Frame
 
         if center_of_mass_corrected:
@@ -375,6 +370,8 @@ class Coalescence:
     @property
     def radius_for_extrapolation(self):
         """Radius to use when extrapolating data to infinite radius."""
+        if self.radiationbundle.radius_for_extrapolation is None:
+            self._set_default_radius_for_extrapolation()
         return self.radiationbundle.radius_for_extrapolation
 
     @radius_for_extrapolation.setter
@@ -387,7 +384,7 @@ class Coalescence:
 
         """
         self.radiationbundle.radius_for_extrapolation = extraction_radius
-    
+
     @property
     def use_extrapolation_method(self):
         """The method to use for extrapolating data to infinite radius. If not set explicitly, defaults to 'perturbative'."""
@@ -395,7 +392,15 @@ class Coalescence:
     
     @use_extrapolation_method.setter
     def use_extrapolation_method(self, extrapolation_metod: str):
-        """Set the extrapolation method to use. Choices are 'perturbative' and 'power' . """
+        """Set the method to use when extrapolating data to infinite radius.
+
+        Args:
+            extrapolation_method (str): The extrapolation method to use.
+                Supported values are 'perturbative' and 'power'. If an
+                unsupported value is provided, the method defaults to
+                'perturbative'.
+
+        """
         allowed_methods = ['perturbative', 'power']
         if extrapolation_metod not in allowed_methods:
             warnings.warn(f"Use one of these methods: {allowed_methods}, defaulting to 'perturbative'")
@@ -409,7 +414,13 @@ class Coalescence:
     
     @radii_list_for_power_method.setter
     def radii_list_for_power_method(self, radii_list):
-        """Set the radii list to use to extrapolate to infinity if using power method."""
+        """Set the list of radii to use when extrapolating to infinite radius with the power method.
+
+        Args:
+            radii_list (list[float] or None): The radii to include in the power-law
+                extrapolation. If None, all available radii are used.
+
+        """
         self.radiationbundle.radii_list_for_power_method = radii_list
     
     @property
@@ -419,9 +430,145 @@ class Coalescence:
     
     @order_for_perturbative_method.setter
     def order_for_perturbative_method(self, order: int):
-        """Set the order to use for perturbative method."""
-        self.radiationbundle.order_for_perturbative_method = order
+        """Set the order to use when extrapolating to infinite radius with the perturbative method.
 
+        Args:
+            order (int): The perturbative expansion order to use. If not set
+                explicitly, the default value is 2.
+
+        """
+        self.radiationbundle.order_for_perturbative_method = order
+        
+    def _set_default_radius_for_extrapolation(self):
+        optimal_radius = None
+        
+        extraction_radii = np.array(self.included_extraction_radii)
+        grid_structure = self.grid_structure
+        
+        if grid_structure is None:
+            raise ValueError("Unable to find a good default extraction radius. Please set one manually with Coalescence.radius_for_extrapolation")
+        
+        # find grid structure for center grid
+        center_grid = None
+        for grid_id, grid in grid_structure.items():
+            if grid["center"] == [0.0, 0.0, 0.0]:
+                center_grid = grid
+        grid_levels = sorted(center_grid["levels"].keys())
+                
+        # start by finding largest radius where dx < 1 / (2 * orbital frequency at merger)
+        dx_cutoff = 1.1 * 1/(2*self.orbital_frequency_at_time(self.merge_time))
+        for level in grid_levels: # coarsest to finest
+            if center_grid["levels"][level]["dx"] < dx_cutoff:
+                if extraction_radii[0] > center_grid["levels"][level]["radius"]:
+                    break
+                optimal_radius = max(extraction_radii[extraction_radii < center_grid["levels"][level]["radius"]])
+                break
+
+        # if not possible, grab the largest radius on the first extraction level that has extraction spheres
+        if optimal_radius is None:
+            grid_levels = sorted(grid_levels, reverse=True)
+            for level in grid_levels: # finest to coarsest
+                if extraction_radii[0] > center_grid["levels"][level]["radius"]:
+                    continue
+                else:
+                    optimal_radius = max(extraction_radii[extraction_radii < center_grid["levels"][level]["radius"]])
+                    break
+                
+        # for finetuning, reduce the radius until the merge_time < 150 before the end of the data to ensure full ringdown is captured
+        merge_time = self.merge_time
+
+        extraction_radii_within_optimal = sorted(extraction_radii[extraction_radii <= optimal_radius], reverse=True)
+        for radius in extraction_radii_within_optimal:
+            time = self.radiationbundle.get_time(extraction_radius = radius)
+            if time[-1] - radius > merge_time + 150:
+                optimal_radius = radius
+                break
+        else:
+            optimal_radius = None
+
+        # minimum optimal radius of 70 M
+        minimum_radius = 70
+        if optimal_radius is None or optimal_radius < minimum_radius:
+            raise ValueError("Unable to find a good default extraction radius. Please set one manually with Coalescence.radius_for_extrapolation")
+
+        self.radius_for_extrapolation = optimal_radius
+
+    def reset_radius_for_extrapolation_to_default(self):
+        """Reset the radius to use for extrapolation to infinity back to its default value."""
+        self.radiationbundle.radius_for_extrapolation = None
+        self._set_default_radius_for_extrapolation()
+        
+    @property
+    def grid_structure(self):
+        """Dictionary containing the structure of the adaptive mesh refinement grids used in the simulation."""
+        parameter_files = self.parameter_files
+        if 'par' in parameter_files:
+            parameter_file = parameter_files['par']
+
+            result = re.search(f'CartGrid3D::type\s*=\s*((?P<quote>"?)\s*([a-zA-Z0-9]+)\s*(?P=quote)?)\s*\n', parameter_file)
+            if result is not None and (result.group(1) == "multipatch" or result.group(1) == '"multipatch"'):
+                warnings.warn("Unable to read the grid structure for multipatch systems. Please refer to the parameter file for information on grid structure.")
+                return None
+            
+            grid_structure = {}
+            result = re.search('(?:CarpetRegrid2::num_centres|RegridBoxes::number_of_centres)\s*=\s*(\d+)\s*\n', parameter_file)
+            if result is None:
+                return None
+            num_centers = int(result.group(1))
+
+            result = re.search(f'CoordBase::dx\s*=\s*([-+]?\d+(\.\d+)?)\s*\n', parameter_file)
+            if result is None:
+                return None
+            largest_dx = float(result.group(1))
+
+            # zeroth level is separate but store with the other levels
+            largest_grid = {}
+            result = re.search(f'CoordBase::xmax\s*=\s*([-+]?\d+(\.\d+)?)\s*\n', parameter_file)
+            if result is None:
+                return None
+            radius = float(result.group(1))
+            largest_grid['radius'] = radius
+            largest_grid['dx'] = largest_dx
+            
+            for i in range(1,num_centers+1):
+                grid_structure[i] = {}
+                result = re.search(f'(?:CarpetRegrid2::position_x_{i}|RegridBoxes::centre_x\s*\[{i-1}\])\s*=\s*([-+]?\d+(\.\d+)?)\s*\n', parameter_file)
+                if result is None:
+                    center_x = 0
+                else:
+                    center_x = float(result.group(1))
+                result = re.search(f'(?:CarpetRegrid2::position_y_{i}|RegridBoxes::centre_y\s*\[{i-1}\])\s*=\s*([-+]?\d+(\.\d+)?)\s*\n', parameter_file)
+                if result is None:
+                    center_y = 0
+                else:
+                    center_y = float(result.group(1))
+                result = re.search(f'(?:CarpetRegrid2::position_z_{i}|RegridBoxes::centre_z\s*\[{i-1}\])\s*=\s*([-+]?\d+(\.\d+)?)\s*\n', parameter_file)
+                if result is None:
+                    center_z = 0
+                else:
+                    center_z = float(result.group(1))
+                grid_structure[i]['center'] = [center_x, center_y, center_z]
+                
+                result = re.search(f'(?:CarpetRegrid2::num_levels_{i}|RegridBoxes::refinement_levels\s*\[{i-1}\])\s*=\s*(\d+)\s*\n', parameter_file)
+                if result is None:
+                    return None
+                num_levels = int(result.group(1))
+
+                grid_structure[i]["levels"] = {}
+                grid_structure[i]["levels"][0] = largest_grid
+                # the rest of the levels
+                for level in range(1, num_levels):
+                    result = re.search(f'(?:CarpetRegrid2::radius_{i}|RegridBoxes::centre_{i-1}_radius)\s*\[{level}\]\s*=\s*([-+]?\d+(\.\d+)?)\s*\n', parameter_file)
+                    if result is None:
+                        continue
+                    grid_structure[i]["levels"][level] = {}
+                    radius = float(result.group(1))
+                    grid_structure[i]["levels"][level]['radius'] = radius
+                    grid_structure[i]["levels"][level]['dx'] = largest_dx/(2**level)
+            return grid_structure
+        else:
+            return None
+                
     def recoil_velocity(self, km_per_sec: bool = False) -> np.ndarray:
         """Kick vector of the final object
 
@@ -623,7 +770,7 @@ class Coalescence:
         """Mean anomaly based on periapsis and apoapsis times
 
         Compute and return the mean anomaly at the desired time using
-        :math:`2 \pi * \frac{t - T_{prev}}{T_{next} - T_{prev}}` where :math:`T_{next}' and :math:`T_{prev}' are
+        :math:`2 \pi * \frac{t - T_{prev}}{T_{next} - T_{prev}}` where :math:`T_{next}` and :math:`T_{prev}` are
         periapsis times.
 
         Args:
@@ -680,28 +827,34 @@ class Coalescence:
         return mean_anomaly
 
     def eccentricity_and_mean_anomaly_at_time(self, start_time, desired_time) -> tuple:
-        """Eccentricity and mean anomaly at desired time.
+        r"""Eccentricity and mean anomaly at desired time.
 
-        Compute the eccentricity and the mean anomaly using the orbital frequency as described in https://arxiv.org/abs/1810.00036.
-        Computes the eccentricity averaged over four orbits. If it is unable to fit four orbits of data successfully, it returns
-        an estimate of the eccentricity based on the initial momentum. Mean anomaly is defined as
-        :math:`2 \pi * \frac{t - T_{prev}}{T_{next} - T_{prev}}` where :math:`T_{next}' and :math:`T_{prev}' are
-        periapsis times.
+            Compute the eccentricity and the mean anomaly using the orbital frequency as described in https://arxiv.org/abs/1810.00036.
+            Computes the eccentricity averaged over four orbits. If it is unable to fit four orbits of data successfully, it returns
+            an estimate of the eccentricity based on the initial momentum. Mean anomaly is defined as
 
-        Args:
-            start_time (float): time from which to begin fitting eccentricity
-            desired_time (float): time at which to return the eccentricity
+            .. math::
+                2 \pi \frac{t - T_{prev}}{T_{next} - T_{prev}}
 
-        Returns:
-            tuple: averaged eccentricity over first four orbits and the mean anomaly at the desired time
+            where :math:`T_{next}` and :math:`T_{prev}` are periapsis times.
 
-        """
+            Args:
+                start_time (float): time from which to begin fitting eccentricity
+                desired_time (float): time at which to return the eccentricity
+
+            Returns:
+                tuple: averaged eccentricity over first four orbits and the mean anomaly at the desired time
+
+            """
 
         time, orbital_phase = self.orbital_phase_in_xy_plane
         _, orbital_frequency = self.orbital_frequency
         _, separation_vector = self.separation_vector
         separation_magnitude = np.linalg.norm(separation_vector, axis=1)
-        tmax = self.psi4_max_time_for_mode(l=2, m=2)
+        try:
+            tmax = self.psi4_max_time_for_mode(l=2, m=2) - self.radius_for_extrapolation
+        except ValueError:
+            tmax = self.merge_time
         eta = self.symmetric_mass_ratio
         mass_ratio = self.mass_ratio
 
@@ -918,7 +1071,7 @@ class Coalescence:
 
         self.__radiation_mode_bundle.create_extrapolated_sphere(order=order)
 
-    def psi4_real_imag_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> tuple:
+    def psi4_real_imag_for_mode(self, l: int, m: int, extraction_radius: float = None) -> tuple:
         """Real and imaginary components of :math:`\Psi_4` for a given mode.
 
         Returns the time and real and imaginary parts of :math:`\Psi_4` for a given mode and extraction radius.
@@ -938,7 +1091,7 @@ class Coalescence:
         time = self.__radiation_mode_bundle.get_time(extraction_radius)
         return time, real, imag
 
-    def psi4_amp_phase_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> tuple:
+    def psi4_amp_phase_for_mode(self, l: int, m: int, extraction_radius: float = None) -> tuple:
         """Amplitude and phase of :math:`\Psi_4` for a given mode.
 
         Returns the time and the amplitude and phase of :math:`\Psi_4` for a given mode and extraction radius.
@@ -958,7 +1111,7 @@ class Coalescence:
         time = self.__radiation_mode_bundle.get_time(extraction_radius)
         return time, amplitude, phase
 
-    def strain_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> tuple:
+    def strain_for_mode(self, l: int, m: int, extraction_radius: float = None) -> tuple:
         """Real and imaginary components of strain for a given mode.
 
         Returns the time and the plus and cross components of :math:`rh` for a given mode and extraction radius,
@@ -980,7 +1133,7 @@ class Coalescence:
         time = self.radiationbundle.get_time(extraction_radius)
         return time, plus, cross
 
-    def strain_recomposed_at_sky_location(self, theta: float, phi: float, extraction_radius: float = 0) -> tuple:
+    def strain_recomposed_at_sky_location(self, theta: float, phi: float, extraction_radius: float = None) -> tuple:
         """Time, plus, and cross components of strain recomposed at a given sky location
 
         The strain is recomposed by summing up the modes using spin weighted spherical harmonics as
@@ -1000,7 +1153,7 @@ class Coalescence:
         time = self.__radiation_mode_bundle.get_time(extraction_radius)
         return time, plus, cross
 
-    def strain_amp_phase_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> tuple:
+    def strain_amp_phase_for_mode(self, l: int, m: int, extraction_radius: float = None) -> tuple:
         """Amplitude and phase of strain for a given mode.
 
         Returns the time and amplitude and phase of the strain for a given mode and extraction radius. The
@@ -1021,7 +1174,7 @@ class Coalescence:
         time = self.radiationbundle.get_time(extraction_radius)
         return time, amp, phase
 
-    def psi4_max_time_for_mode(self, l: int, m: int, extraction_radius: float = 0) -> float:
+    def psi4_max_time_for_mode(self, l: int, m: int, extraction_radius: float = None) -> float:
         """Time of maximum :math:`\Psi_4` amplitude for a given mode.
 
         The time at which the amplitude of :math:`\Psi_4` reaches its peak.
