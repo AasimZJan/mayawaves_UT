@@ -1784,7 +1784,7 @@ class RadiationMode:
             fmin = 0.25 * omega_22_start / (2 * np.pi)
         else:
             fmin = 0.75*(abs(self.m_value) / 2) * omega_22_start / (2 * np.pi)
-            if self.m_value < 2:
+            if np.abs(self.m_value) < 2:
                 fmin = omega_22_start / (2 * np.pi)
 
         # psi4f from psi4t
