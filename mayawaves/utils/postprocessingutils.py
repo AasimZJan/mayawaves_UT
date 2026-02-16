@@ -1045,28 +1045,6 @@ def _simulation_name(raw_directory: str) -> str:
     simulation_name = raw_directory.split('/')[-1]
     return simulation_name
 
-def _get_TwoPunctures_content(raw_directory: str) -> str:
-    """Retrieve the content of the TwoPunctures.bbh file from a simulation directory.
-
-    Args:
-        raw_directory (str): the directory that contains all simulation data
-
-    Returns:
-        str | None: The content of the `TwoPunctures.bbh` file if found,
-        otherwise None.
-    """
-    directory_name = raw_directory.split('/')[-1]
-    TwoPunctures_basepath = raw_directory + '/output-0000/' + directory_name 
-    TwoPuncturesfile_path = TwoPunctures_basepath + '/TwoPunctures.bbh'
-
-    if os.path.exists(TwoPuncturesfile_path):
-        with open(TwoPuncturesfile_path, 'r') as f:
-            content = f.read()
-        return content
-    else:
-        warnings.warn(f"TwoPunctures.bbh does not exist in {TwoPunctures_basepath}")
-        return None
-    
 def _get_parameter_file_name_and_content(raw_directory: str) -> tuple:
     """Store the parameter file in the h5 file
 
@@ -1237,20 +1215,6 @@ def _store_parameter_file(parfile_dict: dict, h5_file: h5py.File):
 
     if "rpar_content" in parfile_dict:
         parfile_group.attrs['rpar_content'] = parfile_dict['rpar_content']
-
-def _store_TwoPunctures_file(TwoPunctures_content:str, h5_file: h5py.File):
-    """Store the TwoPunctures.bbh file content in the h5 file. NA if file not found.
-
-    Args:
-        TwoPunctures_content (str): The content of the `TwoPunctures.bbh` file,
-            or None if the file was not found.
-        h5_file (h5py.File): The HDF5 file to store the TwoPunctures content in.
-    """
-    TwoPunctures_group = h5_file.create_group('TwoPunctures')
-    if TwoPunctures_content is not None:
-        TwoPunctures_group['content'] = TwoPunctures_content
-    else:
-        TwoPunctures_group['content'] = 'NA'
 
 def _all_relevant_data_filepaths(raw_directory: str, parameter_file: str, parameter_file_name_base: str) -> dict:
     """Dictionary of all relevant data files.
@@ -1608,7 +1572,7 @@ def _get_initial_dimensional_spins(h5_file: h5py.File) -> tuple:
                                                          [CompactObject.Column.SX, CompactObject.Column.SY,
                                                           CompactObject.Column.SZ])
 
-        if len(dimensional_spin_data_0) == 0 or len(dimensional_spin_data_1) == 0:
+        if dimensional_spin_data_0 is None or dimensional_spin_data_1 is None or len(dimensional_spin_data_0) == 0 or len(dimensional_spin_data_1) == 0:
             if 'parfile' not in h5_file:
                 warnings.warn('There is no parameter file data for this simulation.')
                 return
@@ -2034,7 +1998,6 @@ def create_h5_from_simulation(raw_directory: str, output_directory: str, catalog
 
     simulation_name = _simulation_name(raw_directory)
     parameter_file_name_base, parameter_file_dict = _get_parameter_file_name_and_content(raw_directory)
-    TwoPunctures_content = _get_TwoPunctures_content(raw_directory)
 
     if catalog_id is not None:
         h5_filename = os.path.join(output_directory, catalog_id + ".h5")
@@ -2048,10 +2011,6 @@ def create_h5_from_simulation(raw_directory: str, output_directory: str, catalog
     print("storing parameter file")
     _store_parameter_file(parameter_file_dict, h5_file)
 
-    # store TwoPunctures file
-    print("storing TwoPunctures file")
-    _store_TwoPunctures_file(TwoPunctures_content, h5_file)
-    
     # get all relevant filepaths
     if "parfile" in h5_file.keys():
         if 'par_content'in h5_file["parfile"].attrs:
@@ -2443,7 +2402,7 @@ def _store_compact_object_timeseries_data(coalescence: Coalescence, lal_h5_file:
 
 def _store_lal_metadata(coalescence: Coalescence, lal_h5_file, name: str, alternative_names: list,
                         initial_time_horizon: float, omega_22_nr: float, lvc_format: int, NR_group: str, NR_code: str,
-                        bibtex_keys: str, contact_email: str, license_type: str = 'LVC-internal', nr_techniques: str = None,
+                        bibtex_keys: str, contact_email: str, lmax: int, license_type: str = 'LVC-internal', nr_techniques: str = None,
                         comparable_simulation: str = None, files_in_error_series: str = '', production_run: bool = True):
     """Store the metadata in the provided h5 file.
 
@@ -2459,6 +2418,7 @@ def _store_lal_metadata(coalescence: Coalescence, lal_h5_file, name: str, altern
         NR_code (str): NR code that performed this simulation
         bibtex_keys (str): bibtex keys to use when citing this simulation
         contact_email (str): email to use if questions arise regarding this simulation
+        lmax (int): maximum l value to store
         license_type (:obj:`str`, optional): whether it is public or LVC-internal
         nr_techniques (:obj:`str`, optional): what techniques were used in this simulation
         comparable_simulation (:obj:`str`, optional): other similar simulations
@@ -2482,7 +2442,7 @@ def _store_lal_metadata(coalescence: Coalescence, lal_h5_file, name: str, altern
     lal_h5_file.attrs["simulation-type"] = coalescence.spin_configuration
     lal_h5_file.attrs["INSPIRE-bibtex-keys"] = bibtex_keys
     lal_h5_file.attrs["license"] = license_type
-    lal_h5_file.attrs["Lmax"] = coalescence.l_max
+    lal_h5_file.attrs["Lmax"] = lmax
     if nr_techniques is None:
         nr_techniques = 'Puncture-ID, BSSN, Psi4-integrated, Extrapolated-Waveform, ApproxKillingVector-Spin, ' \
                         'Christodoulou-Mass'
@@ -2684,7 +2644,7 @@ def _put_data_in_lal_compatible_format(coalescence: Coalescence, lal_h5_file_nam
                                        NR_group: str, NR_code: str, bibtex_keys: str, contact_email: str,
                                        license_type = 'LVC-internal', nr_techniques: str = None,
                                        comparable_simulation: str = None, files_in_error_series: str = '',
-                                       production_run: bool = True, center_of_mass_correction: bool = False):
+                                       production_run: bool = True, center_of_mass_correction: bool = False, lmax: int = None):
     """Exports the Coalescence object to a format compatible with LALSuite.
 
     Exports the Coalescence object into the format required by https://arxiv.org/abs/1703.01076 in order to be
@@ -2695,7 +2655,7 @@ def _put_data_in_lal_compatible_format(coalescence: Coalescence, lal_h5_file_nam
         lal_h5_file_name (str): the path to the h5 file being exported to
         name (str): the name of the simulation
         alternative_names (list): alternative names for the simulation
-        extraction_radius (float): the extraction radius being exported. If 0, will be extrapolated to infinite radius.
+        extraction_radius (float): the extraction radius being exported. If None, will be extrapolated to infinite radius.
         NR_group (str): NR group that performed this simulation
         NR_code (str): NR code that performed this simulation
         bibtex_keys (str): bibtex keys to use when citing this simulation
@@ -2706,6 +2666,7 @@ def _put_data_in_lal_compatible_format(coalescence: Coalescence, lal_h5_file_nam
         files_in_error_series (:obj:`str`, optional): other simulations in the same error series
         production_run (:obj:`bool`, optional): whether this is a production run. Default True.
         center_of_mass_correction (:obj:'bool', optional): whether to correct for center of mass drift. Default False.
+        lmax (:obj:'int', optional): the maximum l value to include modes for
 
     """
     from mayawaves.radiation import Frame
@@ -2716,11 +2677,16 @@ def _put_data_in_lal_compatible_format(coalescence: Coalescence, lal_h5_file_nam
             coalescence.set_radiation_frame()
 
     initial_time_horizon = 75
-    if extraction_radius != 0:
+    if extraction_radius is not None:
         initial_time_strain = initial_time_horizon + extraction_radius
     else:
-        initial_time_strain = initial_time_horizon + coalescence.radiationbundle.radius_for_extrapolation
+        if coalescence.radius_for_extrapolation is None:
+            raise ValueError("Unable to put into lal compatible format without either an extraction_radius or a radius for extrapolation. Please set Coalescence.radius_for_extrapolation.")
+        initial_time_strain = initial_time_horizon + coalescence.radius_for_extrapolation
 
+    if lmax is None:
+        lmax = coalescence.l_max
+        
     lal_h5_file = h5py.File(lal_h5_file_name, 'w')
     # strain
     included_modes = coalescence.included_modes
@@ -2731,9 +2697,11 @@ def _put_data_in_lal_compatible_format(coalescence: Coalescence, lal_h5_file_nam
     for mode in included_modes:
         l = int(mode[0])
         m = int(mode[1])
+        if l > lmax:
+            continue
         if l < 2:
             continue
-        time_raw, amp_raw, phase_raw = coalescence.strain_amp_phase_for_mode(l, m, extraction_radius)
+        time_raw, amp_raw, phase_raw = coalescence.strain_amp_phase_for_mode(l, m, extraction_radius=extraction_radius)
         if time_raw is None or amp_raw is None or phase_raw is None:
             raise_mode_error = True
             continue
@@ -2772,11 +2740,11 @@ def _put_data_in_lal_compatible_format(coalescence: Coalescence, lal_h5_file_nam
         lvc_format = determine_lvc_format(coalescence, initial_horizon_time=initial_time_horizon)
 
         _store_lal_metadata(coalescence, lal_h5_file, name, alternative_names, initial_time_horizon, omega_22_nr,
-                            lvc_format, NR_group, NR_code, bibtex_keys, contact_email, license_type, nr_techniques,
+                            lvc_format, NR_group, NR_code, bibtex_keys, contact_email, lmax, license_type, nr_techniques,
                             comparable_simulation, files_in_error_series, production_run)
 
         time_shift = max_time - (
-            coalescence.radiationbundle.radius_for_extrapolation if extraction_radius == 0 else extraction_radius)
+            coalescence.radiationbundle.radius_for_extrapolation if extraction_radius is None else extraction_radius)
         _store_compact_object_timeseries_data(coalescence, lal_h5_file, lvc_format, time_shift, initial_time_horizon)
 
         lal_h5_file.close()
@@ -2888,9 +2856,9 @@ def determine_lvc_format(coalescence: Coalescence, initial_horizon_time: float) 
 
 def export_to_lvcnr_catalog(coalescence: Coalescence, output_directory: str,
                             NR_group: str, NR_code: str, bibtex_keys: str, contact_email: str,
-                            name: str = None, license_type='LVC-internal', nr_techniques: str = None,
+                            extraction_radius: float = None, name: str = None, license_type='LVC-internal', nr_techniques: str = None,
                             comparable_simulation: str = None, files_in_error_series: str = '',
-                            production_run: bool = True, center_of_mass_correction: bool = False):
+                            production_run: bool = True, center_of_mass_correction: bool = False, lmax: int = None):
     """Exports the Coalescence object to the format required by LIGO to be included in the LVC-NR catalog.
 
     Exports the Coalescence object into the format required by https://arxiv.org/abs/1703.01076 in order to be
@@ -2904,6 +2872,7 @@ def export_to_lvcnr_catalog(coalescence: Coalescence, output_directory: str,
         NR_code (str): NR code that performed this simulation
         bibtex_keys (str): bibtex keys to use when citing this simulation
         contact_email (str): email to use if questions arise regarding this simulation
+        extraction_radius (:obj:`float`, optional): radius at which to extract gravitational wave data
         name (:obj:`str`, optional): the tag to save the simulation as (e.g. MAYA0908)
         license_type (:obj:`str`, optional): whether it is public or LVC-internal
         nr_techniques (:obj:`str`, optional): what techniques were used in this simulation
@@ -2911,6 +2880,7 @@ def export_to_lvcnr_catalog(coalescence: Coalescence, output_directory: str,
         files_in_error_series (:obj:`str`, optional): other simulations in the same error series
         production_run (:obj:`bool`, optional): whether this is a production run. Default True.
         center_of_mass_correction (:obj:`bool`, optional): whether to correct for center of mass drift. Default False.
+        lmax (:obj:'int', optional): the maximum l value to include modes for 
 
     """
     catalog_id = coalescence.catalog_id
@@ -2929,12 +2899,12 @@ def export_to_lvcnr_catalog(coalescence: Coalescence, output_directory: str,
     h5_file_path = os.path.join(output_directory, name + ".h5")
     try:
         _put_data_in_lal_compatible_format(coalescence=coalescence, lal_h5_file_name=h5_file_path, name=name,
-                                           alternative_names=alternative_names, extraction_radius=0,
+                                           alternative_names=alternative_names, extraction_radius=extraction_radius,
                                            NR_group=NR_group, NR_code=NR_code, bibtex_keys=bibtex_keys,
                                            contact_email=contact_email, license_type=license_type,
                                            nr_techniques=nr_techniques, comparable_simulation=comparable_simulation,
                                            files_in_error_series=files_in_error_series, production_run=production_run,
-                                           center_of_mass_correction=center_of_mass_correction)
+                                           center_of_mass_correction=center_of_mass_correction, lmax=lmax)
 
     except IOError as e:
         print(e)
@@ -2945,10 +2915,10 @@ def export_to_lvcnr_catalog(coalescence: Coalescence, output_directory: str,
 
 def export_to_lal_compatible_format(coalescence: Coalescence, output_directory,
                                     NR_group: str, NR_code: str, bibtex_keys: str, contact_email: str,
-                                    extraction_radius: float = 0, name=None, license_type='LVC-internal',
+                                    extraction_radius: float = None, name=None, license_type='LVC-internal',
                                     nr_techniques: str = None,
                                     comparable_simulation: str = None, files_in_error_series: str = '',
-                                    production_run: bool = True, center_of_mass_correction: bool = False):
+                                    production_run: bool = True, center_of_mass_correction: bool = False, lmax: int = None):
     """Exports the Coalescence object to a format compatible with LALSuite.
 
     Exports the Coalescence object into the format required by https://arxiv.org/abs/1703.01076 in order to be
@@ -2969,6 +2939,7 @@ def export_to_lal_compatible_format(coalescence: Coalescence, output_directory,
         files_in_error_series (:obj:`str`, optional): other simulations in the same error series
         production_run (:obj:`bool`, optional): whether this is a production run. Default True.
         center_of_mass_correction (:obj:`bool`, optional): whether to correct for center of mass drift. Default False.
+        lmax (:obj:'int', optional): the maximum l value to include modes for 
 
     """
     simulation_name = coalescence.name
@@ -2985,7 +2956,7 @@ def export_to_lal_compatible_format(coalescence: Coalescence, output_directory,
                                            license_type=license_type, nr_techniques=nr_techniques,
                                            comparable_simulation=comparable_simulation,
                                            files_in_error_series=files_in_error_series, production_run=production_run,
-                                           center_of_mass_correction=center_of_mass_correction)
+                                           center_of_mass_correction=center_of_mass_correction, lmax=lmax)
     except IOError as e:
         print(e)
         warnings.warn(
