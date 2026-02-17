@@ -10,8 +10,8 @@ import warnings
 # Open questions: 
 # 1) Small phase shift relative to perturbative
 # 2) What does the junk radiation block do in extrapolate_using_power_method
-# 3) I am using real FFT logic to surpress frequency content but here the FFT is of complex time series.
-# 4) Post merger noise
+# 3) I am using real FFT logic to surpress frequency content but here the FFT is of complex time series. It works..
+# 4) Post merger noise. Biggest issue.
 ###########################################################################################
 # Psi4 to strain conversion functions
 ###########################################################################################
@@ -213,7 +213,7 @@ def extrapolate_using_power_method(radiation_bundle):
                 omega_0 = 0.25 * omega_22_start
             else:
                 omega_0 = 0.75*(abs(em) / 2) * omega_22_start
-                if em < 2:
+                if np.abs(em) < 2:
                     omega_0 = omega_22_start
 
             # convert to strain 
