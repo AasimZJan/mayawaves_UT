@@ -1780,19 +1780,19 @@ class RadiationMode:
         length = len(self.time)
 
         # compute fmin
-        if self.m_value == 0:
-            fmin = 0.25 * omega_22_start / (2 * np.pi)
+        if np.abs(self.m_value) < 2:
+            fmin = omega_22_start / (2 * np.pi)
         else:
             fmin = 0.75*(abs(self.m_value) / 2) * omega_22_start / (2 * np.pi)
-            if np.abs(self.m_value) < 2:
-                fmin = omega_22_start / (2 * np.pi)
+            # if 
+            #     fmin = omega_22_start / (2 * np.pi)
 
         # psi4f from psi4t
         psi4_f_real = np.fft.rfft(self.psi4_real, length)
         psi4_f_imaginary = np.fft.rfft(self.psi4_imaginary, length)
         frequency = np.fft.rfftfreq(length, d=timestep)
 
-        frequency[abs(frequency) < fmin] = fmin
+        frequency[abs(frequency) < fmin] = fmin 
 
         # hf from psi4_f
         factor = 4 * np.pi ** 2 * np.power(frequency, 2)
