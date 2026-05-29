@@ -1780,7 +1780,7 @@ class RadiationMode:
         length = len(self.time)
 
         # compute fmin
-        if np.abs(self.m_value) < 2:
+        if np.abs(self.m_value) < 2 and self.l_value != 2:
             fmin = omega_22_start / (2 * np.pi)
         else:
             fmin = 0.75*(abs(self.m_value) / 2) * omega_22_start / (2 * np.pi)
